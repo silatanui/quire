@@ -3,9 +3,12 @@ deployment:
   tasks:
     - export DEPLOYPATH=/home/ipusgkqs/public_html/quire/
     - /bin/mkdir -p $DEPLOYPATH
-    - /bin/cp index.html board.html deck.html icon.svg $DEPLOYPATH
     - /bin/mkdir -p $DEPLOYPATH/api
+    - /bin/mkdir -p $DEPLOYPATH/config
+    - /bin/cp index.html board.html deck.html icon.svg $DEPLOYPATH
     - /bin/cp api/deck.php $DEPLOYPATH/api/
+    - /bin/cp config/secrets.example.php $DEPLOYPATH/config/
+    - if [ ! -f $DEPLOYPATH/config/secrets.php ]; then /bin/cp config/secrets.example.php $DEPLOYPATH/config/secrets.php; fi
     - /bin/cp -R images $DEPLOYPATH
     - /bin/cp -R css $DEPLOYPATH
     - /bin/cp -R js $DEPLOYPATH
