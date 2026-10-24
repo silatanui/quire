@@ -6,3 +6,7 @@ deployment:
     - /bin/cp index.html $DEPLOYPATH
     - /bin/cp -R css $DEPLOYPATH
     - /bin/cp -R js $DEPLOYPATH
+    - /bin/rm -f /home/ipusgkqs/public_html/index.html
+    - /bin/rm -f /home/ipusgkqs/public_html/css/app.css
+    - /bin/rm -f /home/ipusgkqs/public_html/js/main.js /home/ipusgkqs/public_html/js/model.js /home/ipusgkqs/public_html/js/rough.js /home/ipusgkqs/public_html/js/rough.LICENSE
+    - /bin/rmdir /home/ipusgkqs/public_html/css /home/ipusgkqs/public_html/js 2>/dev/null || /bin/true
