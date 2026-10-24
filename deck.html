@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Quire folio</title>
+  <link rel="icon" href="icon.svg?v=3" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cabin+Condensed:wght@400;500;600;700&family=Caveat:wght@500;700&family=Kalam:wght@400;700&family=Libre+Baskerville&family=Varela+Round&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/deck.css">
+</head>
+<body>
+  <header class="bar">
+    <a class="brand" href="index.html" aria-label="Quire home">
+      <img src="images/quire-mark.svg?v=3" width="22" height="22" alt="">
+      Folio
+    </a>
+    <input id="title" type="text" maxlength="80" aria-label="Talk title" placeholder="Untitled talk">
+    <nav class="workspace-nav" aria-label="Workspace">
+      <a href="board.html">Board</a>
+      <a href="deck.html" aria-current="page">Folio</a>
+    </nav>
+    <button type="button" id="ask">Ask for a talk</button>
+    <div class="file-slot" id="file-slot">
+      <button type="button" id="file-button" aria-haspopup="menu" aria-expanded="false">File</button>
+      <div id="file-menu" class="file-menu" role="menu" hidden>
+        <button type="button" id="new-file" role="menuitem">New file</button>
+        <button type="button" id="device-files" role="menuitem">On this device</button>
+        <button type="button" id="open-folio" role="menuitem">Open a copy</button>
+        <button type="button" id="save-folio" role="menuitem">Keep a copy</button>
+        <button type="button" id="export-pdf" role="menuitem">Download PDF</button>
+        <button type="button" id="export-pptx" role="menuitem">Download PowerPoint</button>
+        <p id="kept" class="kept">Kept on this device</p>
+      </div>
+    </div>
+    <button type="button" id="present" class="solid">Present</button>
+  </header>
+
+  <div class="tool-row">
+    <div id="tools" class="tool-island" role="toolbar" aria-label="Shapes"></div>
+  </div>
+
+  <button type="button" id="open-rail" class="panel-open rail-toggle" hidden aria-label="Show sheets">Sheets</button>
+  <button type="button" id="open-properties" class="panel-open props-toggle" hidden aria-label="Show details">Details</button>
+  <div class="panel-scrim" id="panel-scrim" hidden></div>
+  <div class="workspace">
+    <aside class="rail" id="rail" aria-label="Sheets">
+      <div class="panel-head">
+        <span>Sheets</span>
+        <button type="button" class="panel-close" id="close-rail" aria-label="Close sheets">×</button>
+      </div>
+      <ol id="film"></ol>
+      <button type="button" id="add-sheet">New sheet</button>
+      <div class="rail-actions">
+        <button type="button" id="earlier">Earlier</button>
+        <button type="button" id="later">Later</button>
+        <button type="button" id="duplicate">Duplicate</button>
+        <button type="button" id="add-line">Add a line</button>
+        <button type="button" id="remove">Remove</button>
+      </div>
+    </aside>
+    <div class="stage-wrap">
+      <div id="stage">
+        <canvas id="sheet" aria-label="Current sheet"></canvas>
+        <textarea id="editor" aria-label="Edit words" hidden></textarea>
+      </div>
+      <div class="zoom-bar" aria-label="Zoom">
+        <button type="button" id="zoom-out" aria-label="Zoom out">−</button>
+        <button type="button" id="zoom-level" aria-label="Fit the sheet">100%</button>
+        <button type="button" id="zoom-in" aria-label="Zoom in">+</button>
+      </div>
+      <label class="note-label" for="note">What to say
+        <textarea id="note" maxlength="800" placeholder="A sentence you can say while this sheet is up."></textarea>
+      </label>
+    </div>
+  </div>
+
+  <aside id="properties" class="folio-properties" aria-label="Style" hidden></aside>
+
+  <button type="button" id="present-prev" class="present-nav prev" hidden aria-label="Previous sheet">‹</button>
+  <button type="button" id="present-next" class="present-nav next" hidden aria-label="Next sheet">›</button>
+  <p id="present-note" hidden></p>
+  <p id="toast" class="toast" hidden></p>
+  <div id="context-menu" class="context-menu" role="menu" hidden>
+    <button type="button" data-action="copy" data-need="selection" role="menuitem">Copy <kbd>Ctrl C</kbd></button>
+    <button type="button" data-action="cut" data-need="selection" role="menuitem">Cut <kbd>Ctrl X</kbd></button>
+    <button type="button" data-action="paste" role="menuitem">Paste <kbd>Ctrl V</kbd></button>
+    <button type="button" data-action="duplicate" data-need="selection" role="menuitem">Duplicate <kbd>Ctrl click</kbd></button>
+    <button type="button" data-action="merge" role="menuitem">Merge</button>
+    <button type="button" data-action="unmerge" role="menuitem">Unmerge</button>
+    <button type="button" data-action="delete" data-need="selection" role="menuitem">Delete</button>
+  </div>
+  <div id="sheet-menu" class="context-menu sheet-menu" role="menu" hidden>
+    <button type="button" data-sheet-action="duplicate" role="menuitem">Duplicate</button>
+    <button type="button" data-sheet-action="copy" role="menuitem">Copy</button>
+    <button type="button" data-sheet-action="paste" role="menuitem">Paste after</button>
+    <button type="button" data-sheet-action="earlier" role="menuitem">Move earlier</button>
+    <button type="button" data-sheet-action="later" role="menuitem">Move later</button>
+    <button type="button" data-sheet-action="remove" role="menuitem">Remove</button>
+  </div>
+  <div id="dup-mark" hidden aria-hidden="true">+</div>
+
+  <dialog id="ask-dialog">
+    <form method="dialog">
+      <h2>Ask for a talk</h2>
+      <p>Describe who it is for and what they should leave knowing. Quire writes the sheets. You can still change every line.</p>
+      <textarea id="prompt" maxlength="1500" placeholder="A five-minute talk for new teachers about giving feedback without crushing the work."></textarea>
+      <label class="count">Sheets
+        <select id="sheet-count" aria-label="How many sheets">
+          <option value="4">4</option>
+          <option value="6" selected>6</option>
+          <option value="8">8</option>
+        </select>
+      </label>
+      <p id="ask-status" class="status" role="status"></p>
+      <div class="dialog-actions">
+        <button type="submit" value="cancel">Close</button>
+        <button type="button" id="compose" class="solid">Write the sheets</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="files-dialog">
+    <form method="dialog">
+      <h2>Talks on this device</h2>
+      <p>Each talk stays in this browser. Opening one does not erase the others.</p>
+      <div id="file-list" class="file-list"></div>
+      <div class="dialog-actions">
+        <button type="submit">Close</button>
+      </div>
+    </form>
+  </dialog>
+
+  <input id="file-input" type="file" accept="application/json,.json" hidden>
+  <script src="js/rough.js"></script>
+  <script type="module" src="js/deck.js?v=image"></script>
+</body>
+</html>

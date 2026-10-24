@@ -3,7 +3,10 @@ deployment:
   tasks:
     - export DEPLOYPATH=/home/ipusgkqs/public_html/quire/
     - /bin/mkdir -p $DEPLOYPATH
-    - /bin/cp index.html $DEPLOYPATH
+    - /bin/cp index.html board.html deck.html icon.svg $DEPLOYPATH
+    - /bin/mkdir -p $DEPLOYPATH/api
+    - /bin/cp api/deck.php $DEPLOYPATH/api/
+    - /bin/cp -R images $DEPLOYPATH
     - /bin/cp -R css $DEPLOYPATH
     - /bin/cp -R js $DEPLOYPATH
     - /bin/rm -f /home/ipusgkqs/public_html/index.html

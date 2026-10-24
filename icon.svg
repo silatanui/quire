@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none">
+  <title>Quire</title>
+  <!--
+    A quire is a stack of folded sheets. Three offset planes in the palette
+    read as depth; white rules on the top sheet are the working page.
+  -->
+  <rect x="10" y="2.5" width="17" height="21" rx="1.5" fill="#830000"/>
+  <rect x="6.5" y="5.5" width="17" height="21" rx="1.5" fill="#BC0202"/>
+  <rect x="3" y="8.5" width="17" height="21" rx="1.5" fill="#000000"/>
+  <path d="M7 14.5h9M7 18.5h9M7 22.5h5.5" stroke="#FFFFFF" stroke-width="1.6" stroke-linecap="square"/>
+</svg>

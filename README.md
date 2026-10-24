@@ -6,7 +6,7 @@ Open it at [tanuisila.dev/quire](https://tanuisila.dev/quire).
 
 ## Run it locally
 
-The site is static. Serve this folder with any web server and open `index.html`. With XAMPP, put the folder under `htdocs` and visit `http://localhost/quire/`.
+The site is static. Serve this folder with any web server. `index.html` is the front page and `board.html` is the sheet. With XAMPP, put the folder under `htdocs` and visit `http://localhost/quire/`.
 
 ```bash
 node --test tests/model.test.js
@@ -35,7 +35,8 @@ The menu can open a file, keep a JSON copy, export a picture, pass a snapshot, f
 
 ## Layout
 
-- `index.html` is the page.
+- `index.html` is the front page.
+- `board.html` is the sheet.
 - `css/app.css` is the interface.
 - `js/main.js` runs the board.
 - `js/model.js` holds geometry, hit testing, and the scene file.
@@ -45,4 +46,4 @@ A saved file looks like `{ "type": "drawexcal", "version": 1, "elements": [] }`.
 
 ## Credit
 
-Quire is an original board. Its behavior was studied from the public whiteboard at [excalidraw.com](https://excalidraw.com/) with [REA](https://github.com/morluto/rea). It does not include that project's source, name, logo, accounts, or live collaboration.
+This site is a portfolio piece. It shows reverse-engineering skill: the public whiteboard at [excalidraw.com](https://excalidraw.com/) was studied with [REA](https://github.com/morluto/rea), then rebuilt here as an original board. Quire does not include that project's source, name, logo, accounts, or live collaboration.

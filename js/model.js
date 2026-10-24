@@ -8,6 +8,8 @@ export const DEFAULT_STYLE = {
   opacity: 100,
   fontSize: 24,
   roundness: 0,
+  textFill: "transparent",
+  borderColor: "transparent",
 };
 
 export function uid() {
@@ -56,6 +58,17 @@ export function createElement(type, x, y, style = DEFAULT_STYLE) {
   if (type === "text") {
     element.width = 240;
     element.height = element.fontSize * 1.25;
+    element.textFill = style.textFill || "transparent";
+    element.borderColor = style.borderColor || "transparent";
+  }
+  if (type === "image") {
+    element.width = 240;
+    element.height = 180;
+    element.src = "";
+    element.naturalWidth = 0;
+    element.naturalHeight = 0;
+    element.strokeColor = "transparent";
+    element.backgroundColor = "transparent";
   }
   return element;
 }

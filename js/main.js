@@ -22,8 +22,15 @@ import {
   withAbsPoints,
   intersects,
 } from "./model.js";
+import {
+  clipboardImageFiles,
+  dataTransferImageFiles,
+  filesToImageElements,
+  paintImage,
+  pickImageFiles,
+} from "./media.js";
 
-const FONT = '"Patrick Hand", "Comic Sans MS", cursive';
+const FONT = '"Varela Round", "Segoe UI", sans-serif';
 const STORAGE_KEY = "drawexcal-v1";
 const NOTE_KEY = "drawexcal-note-dismissed";
 const PAPERS = ["#ffffff", "#f4f1ea", "#e7f2fb", "#fff4c2", "#fde8ef", "#e8f6ef", "#1e1e24"];
@@ -38,7 +45,7 @@ const COPY = {
     close: "Close", exportTitle: "Picture export", exportHint: "A still of the whole drawing, on the paper color you picked.",
     downloadPng: "Download PNG", copyPicture: "Copy picture", palettePlaceholder: "Jump to a command", findTitle: "Look up words",
     findPlaceholder: "Words on the board", aboutTitle: "About this board",
-    aboutBody: "This is a private studio on your machine. Pass a snapshot when you want someone else to have a copy. There is no account, no chat room, and no live session.",
+    aboutBody: "This is a portfolio site to show reverse-engineering skill. Quire was rebuilt from public whiteboard behavior studied with REA. It stays on your machine: pass a snapshot to share a copy. There is no account, no chat room, and no live session.",
     freshTitle: "Start fresh?", freshBody: "The board clears. Undo can bring the drawing back.", keep: "Keep it", clearIt: "Clear it",
     fit: "Frame the drawing", copied: "Snapshot copied. Another DrawExcal tab can take it from the jump bar.",
     copyFail: "Could not copy. The browser blocked the clipboard.", pasted: "Snapshot placed on the board.",
@@ -55,7 +62,7 @@ const COPY = {
     close: "Cerrar", exportTitle: "Exportar imagen", exportHint: "Una foto de todo el dibujo, sobre el papel que elegiste.",
     downloadPng: "Descargar PNG", copyPicture: "Copiar imagen", palettePlaceholder: "Saltar a un comando", findTitle: "Buscar palabras",
     findPlaceholder: "Palabras en el tablero", aboutTitle: "Sobre este tablero",
-    aboutBody: "Este estudio queda en tu máquina. Pasa una copia cuando quieras compartir el dibujo. No hay cuenta, chat ni sesión en vivo.",
+    aboutBody: "Este sitio es un portfolio para mostrar ingeniería inversa. Quire se reconstruyó a partir del comportamiento público estudiado con REA. Queda en tu máquina: pasa una copia para compartir. No hay cuenta, chat ni sesión en vivo.",
     freshTitle: "¿Empezar de cero?", freshBody: "El tablero se vacía. Deshacer puede devolver el dibujo.", keep: "Conservar", clearIt: "Vaciar",
     fit: "Encuadrar el dibujo", copied: "Copia lista. Otra pestaña de DrawExcal puede tomarla desde la barra de salto.",
     copyFail: "El navegador bloqueó el portapapeles.", pasted: "Copia colocada en el tablero.",
@@ -72,7 +79,7 @@ const COPY = {
     close: "Fermer", exportTitle: "Exporter l'image", exportHint: "Une image de tout le dessin, sur la couleur de papier choisie.",
     downloadPng: "Télécharger PNG", copyPicture: "Copier l'image", palettePlaceholder: "Aller à une commande", findTitle: "Chercher des mots",
     findPlaceholder: "Mots sur le tableau", aboutTitle: "À propos",
-    aboutBody: "Cet atelier reste sur votre machine. Passez un instantané pour donner une copie. Pas de compte, pas de salon, pas de session live.",
+    aboutBody: "Ce site est un portfolio pour montrer la rétro-ingénierie. Quire a été reconstruit à partir du comportement public étudié avec REA. Il reste sur votre machine : passez un instantané pour partager. Pas de compte, pas de salon, pas de session live.",
     freshTitle: "Repartir à zéro ?", freshBody: "Le tableau se vide. Annuler peut le ramener.", keep: "Garder", clearIt: "Vider",
     fit: "Cadrer le dessin", copied: "Instantané copié. Un autre onglet DrawExcal peut le prendre depuis la barre de saut.",
     copyFail: "Le presse-papiers a été bloqué.", pasted: "Instantané posé sur le tableau.",
@@ -80,8 +87,10 @@ const COPY = {
     markPlaceholder: "Un nom dans le coin",
   },
 };
-const STROKE_COLORS = ["#1e1e1e", "#e03131", "#2f9e44", "#1971c2", "#f08c00", "#6741d9", "#0c8599", "#c2255c"];
+const STROKE_COLORS = ["transparent", "#1e1e1e", "#e03131", "#2f9e44", "#1971c2", "#f08c00", "#6741d9", "#0c8599", "#c2255c"];
 const FILL_COLORS = ["transparent", "#ffc9c9", "#b2f2bb", "#a5d8ff", "#ffec99", "#e5dbff", "#ffd8a8", "#ffffff"];
+const TEXT_GROUNDS = ["transparent", "#fff3bf", "#ffc9c9", "#b2f2bb", "#a5d8ff", "#ffffff", "#e5dbff"];
+const TEXT_BORDERS = ["transparent", "#1e1e1e", "#e03131", "#2f9e44", "#1971c2", "#f08c00", "#6741d9"];
 
 const TOOLS = [
   { id: "hand", label: "Hand (panning tool)", keys: ["h"], title: "H" },
@@ -94,6 +103,7 @@ const TOOLS = [
   { id: "freedraw", label: "Draw", keys: ["p", "7"], title: "P or 7" },
   { id: "text", label: "Text", keys: ["t", "8"], title: "T or 8" },
   { id: "sticky", label: "Sticky note", keys: ["n"], title: "N" },
+  { id: "image", label: "Image", keys: ["i"], title: "I" },
   { id: "eraser", label: "Eraser", keys: ["e", "0"], title: "E or 0" },
 ];
 
@@ -103,6 +113,7 @@ const rc = rough.canvas(canvas);
 const editor = document.querySelector("#text-editor");
 const toolsHost = document.querySelector("#tools");
 const propertiesHost = document.querySelector("#properties");
+const openPropertiesButton = document.querySelector("#open-properties");
 const hint = document.querySelector("#hint");
 const storageNote = document.querySelector("#storage-note");
 const zoomReset = document.querySelector("#zoom-reset");
@@ -118,11 +129,12 @@ let selected = new Set();
 let style = { ...DEFAULT_STYLE };
 let tool = "selection";
 let lockTool = false;
+let propertiesOpen = !window.matchMedia("(max-width: 820px)").matches;
 let grid = false;
 let snap = false;
 let theme = "day";
 let language = "en";
-let paper = "#fffdf8";
+let paper = "#ffffff";
 let mark = "";
 let zoom = 1;
 let panX = 0;
@@ -140,6 +152,9 @@ let resizeHandle = null;
 let resizeStart = null;
 let marqueeBase = new Set();
 let eraserPointer = null;
+let ctrlHeld = false;
+let moveIsDuplicate = false;
+let lastClient = null;
 const undoStack = [];
 const redoStack = [];
 let persistTimer = 0;
@@ -156,6 +171,7 @@ const ICONS = {
   freedraw: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 16c2-6 4-2 6-4s3-6 5-4 3 6 5 2"/></svg>',
   text: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 6h12M12 6v12"/></svg>',
   sticky: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 4h9l3 3v13H6Z"/><path d="M15 4v4h4"/></svg>',
+  image: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3.5" y="5" width="17" height="14" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="m7 16 3.2-3.4a1.2 1.2 0 0 1 1.7 0L15 15l1.3-1.3a1.2 1.2 0 0 1 1.7 0L20 16"/></svg>',
   eraser: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 15.5 12.5 7l5 5L9 20.5H5.5Z"/><path d="M8 13.5 13 18.5"/></svg>',
   lock: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="6" y="10" width="12" height="9" rx="1.5"/><path d="M8.5 10V8a3.5 3.5 0 0 1 7 0v2"/></svg>',
 };
@@ -293,8 +309,13 @@ function zoomToFit() {
   requestRender();
 }
 
+function isCompactUi() {
+  return window.matchMedia("(max-width: 820px)").matches;
+}
+
 function setTool(next) {
   tool = next;
+  if (!isCompactUi()) propertiesOpen = true;
   for (const button of toolsHost.querySelectorAll("[data-tool]")) {
     button.setAttribute("aria-pressed", String(button.dataset.tool === tool));
   }
@@ -303,28 +324,59 @@ function setTool(next) {
   requestRender();
 }
 
-function updateCursor(world) {
+function showDupMark(clientX, clientY) {
+  const mark = document.querySelector("#dup-mark");
+  if (!mark) return;
+  mark.hidden = false;
+  mark.style.left = `${clientX + 14}px`;
+  mark.style.top = `${clientY + 14}px`;
+}
+
+function hideDupMark() {
+  const mark = document.querySelector("#dup-mark");
+  if (mark) mark.hidden = true;
+}
+
+function updateCursor(world, clientX = 0, clientY = 0) {
   if (spaceDown || tool === "hand" || mode === "pan") {
     canvas.style.cursor = "grab";
+    hideDupMark();
     return;
   }
   if (tool === "text") {
     canvas.style.cursor = "text";
+    hideDupMark();
     return;
   }
   if (tool === "eraser") {
     canvas.style.cursor = "none";
+    hideDupMark();
     return;
   }
-  if (tool === "selection" && world && selected.size === 1) {
+  if (tool === "selection" && world && selected.size === 1 && !ctrlHeld) {
     const element = elements.find((item) => selected.has(item.id));
     const handle = element && hitHandle(element, world.x, world.y, 8 / zoom);
     const cursors = { nw: "nwse-resize", se: "nwse-resize", ne: "nesw-resize", sw: "nesw-resize", n: "ns-resize", s: "ns-resize", e: "ew-resize", w: "ew-resize", start: "grab", end: "grab" };
     if (handle && cursors[handle]) {
       canvas.style.cursor = cursors[handle];
+      hideDupMark();
       return;
     }
   }
+  if (tool === "selection" && world) {
+    const hit = hitTest(elements, world.x, world.y, 8 / zoom);
+    if (hit) {
+      if (ctrlHeld) {
+        canvas.style.cursor = "copy";
+        showDupMark(clientX, clientY);
+        return;
+      }
+      canvas.style.cursor = "move";
+      hideDupMark();
+      return;
+    }
+  }
+  hideDupMark();
   canvas.style.cursor = tool === "selection" ? "default" : "crosshair";
 }
 
@@ -352,7 +404,7 @@ function buildTools() {
   lock.type = "button";
   lock.className = "tool-button";
   lock.dataset.tool = "lock";
-  lock.title = "Keep selected tool active after drawing — Q";
+  lock.title = "Keep selected tool active after drawing (Q)";
   lock.setAttribute("aria-label", "Keep selected tool active after drawing");
   lock.setAttribute("aria-pressed", "false");
   lock.innerHTML = ICONS.lock;
@@ -367,12 +419,18 @@ function buildTools() {
     button.type = "button";
     button.className = "tool-button";
     button.dataset.tool = item.id;
-    button.title = `${item.label} — ${item.title}`;
+    button.title = `${item.label}: ${item.title}`;
     button.setAttribute("aria-label", item.label);
     button.setAttribute("aria-keyshortcuts", item.title);
     button.setAttribute("aria-pressed", String(item.id === tool));
     button.innerHTML = ICONS[item.id];
-    button.addEventListener("click", () => setTool(item.id));
+    button.addEventListener("click", () => {
+      if (item.id === "image") {
+        importImages();
+        return;
+      }
+      setTool(item.id);
+    });
     toolsHost.append(button);
   }
 }
@@ -384,10 +442,18 @@ function swatch(color, kind) {
   button.style.background = color === "transparent" ? "" : color;
   button.dataset.color = color;
   button.dataset.kind = kind;
-  button.title = color === "transparent" ? "Transparent" : color;
-  button.setAttribute("aria-label", color === "transparent" ? "Transparent background" : color);
+  const emptyLabel = { stroke: "No outline", fill: "No wash", ground: "No background", border: "No frame" };
+  button.title = color === "transparent" ? (emptyLabel[kind] || "None") : color;
+  button.setAttribute("aria-label", button.title);
   button.addEventListener("click", () => {
-    applyStyle(kind === "stroke" ? { strokeColor: color } : { backgroundColor: color }, true);
+    const patch = kind === "stroke"
+      ? { strokeColor: color }
+      : kind === "ground"
+        ? { textFill: color }
+        : kind === "border"
+          ? { borderColor: color }
+          : { backgroundColor: color };
+    applyStyle(patch, true);
   });
   return button;
 }
@@ -455,23 +521,69 @@ function colorPicker(kind) {
   input.type = "color";
   input.className = "color-picker";
   input.dataset.kind = kind;
-  input.value = kind === "stroke" ? style.strokeColor : "#ffffff";
-  input.title = kind === "stroke" ? "Custom ink" : "Custom wash";
+  input.value = kind === "stroke" || kind === "border"
+    ? (kind === "border" ? "#1e1e1e" : (style.strokeColor && style.strokeColor !== "transparent" ? style.strokeColor : "#1e1e1e"))
+    : kind === "ground" ? "#fff3bf" : "#ffffff";
+  input.title = kind === "stroke" ? "Custom outline" : kind === "border" ? "Custom frame" : kind === "ground" ? "Custom background" : "Custom wash";
   input.setAttribute("aria-label", input.title);
   input.addEventListener("input", () => {
-    applyStyle(kind === "stroke" ? { strokeColor: input.value } : { backgroundColor: input.value }, false);
+    const patch = kind === "stroke"
+      ? { strokeColor: input.value }
+      : kind === "ground"
+        ? { textFill: input.value }
+        : kind === "border"
+          ? { borderColor: input.value }
+          : { backgroundColor: input.value };
+    applyStyle(patch, false);
   });
   input.addEventListener("change", () => applyStyle({}, true));
   return input;
 }
 
+function panelHead(title, onClose) {
+  const head = document.createElement("div");
+  head.className = "panel-head";
+  const label = document.createElement("span");
+  label.textContent = title;
+  const close = document.createElement("button");
+  close.type = "button";
+  close.className = "panel-close";
+  close.setAttribute("aria-label", `Close ${title.toLowerCase()}`);
+  close.title = "Close";
+  close.textContent = "×";
+  close.addEventListener("click", onClose);
+  head.append(label, close);
+  return head;
+}
+
 function buildProperties() {
-  const stroke = group("Ink", "color-row");
-  STROKE_COLORS.slice(0, 5).forEach((color) => stroke.row.append(swatch(color, "stroke")));
+  propertiesHost.append(panelHead("Details", () => {
+    propertiesOpen = false;
+    syncProperties();
+  }));
+  const ink = group("Ink", "color-row");
+  STROKE_COLORS.filter((color) => color !== "transparent").slice(0, 5).forEach((color) => ink.row.append(swatch(color, "stroke")));
+  const inkPicker = colorPicker("stroke");
+  inkPicker.title = "Custom ink";
+  inkPicker.setAttribute("aria-label", "Custom ink");
+  ink.row.append(inkPicker);
+  ink.wrap.dataset.for = "text";
+  const stroke = group("Outline", "color-row");
+  STROKE_COLORS.slice(0, 6).forEach((color) => stroke.row.append(swatch(color, "stroke")));
   stroke.row.append(colorPicker("stroke"));
+  stroke.wrap.dataset.for = "shape";
+  const ground = group("Background", "color-row");
+  TEXT_GROUNDS.forEach((color) => ground.row.append(swatch(color, "ground")));
+  ground.row.append(colorPicker("ground"));
+  ground.wrap.dataset.for = "text";
+  const border = group("Frame", "color-row");
+  TEXT_BORDERS.forEach((color) => border.row.append(swatch(color, "border")));
+  border.row.append(colorPicker("border"));
+  border.wrap.dataset.for = "text";
   const fill = group("Wash", "color-row");
   FILL_COLORS.slice(0, 5).forEach((color) => fill.row.append(swatch(color, "fill")));
   fill.row.append(colorPicker("fill"));
+  fill.wrap.dataset.for = "shape";
   const texture = group("Texture");
   texture.row.append(choice("Lines", "fillStyle", "hachure"), choice("Cross", "fillStyle", "cross-hatch"), choice("Flat", "fillStyle", "solid"));
   const width = group("Weight");
@@ -514,6 +626,7 @@ function buildProperties() {
   opacity.row.append(slider, scale);
   const font = group("Lettering");
   font.row.append(choice("S", "fontSize", 16), choice("M", "fontSize", 24), choice("L", "fontSize", 40));
+  font.wrap.dataset.for = "text";
   const layers = group("Stack");
   [
     ["floor", "back", "Send to the floor"],
@@ -530,7 +643,12 @@ function buildProperties() {
     button.addEventListener("click", () => changeOrder(direction));
     layers.row.append(button);
   });
-  propertiesHost.append(stroke.wrap, fill.wrap, texture.wrap, width.wrap, strokeStyle.wrap, rough.wrap, edges.wrap, opacity.wrap, font.wrap, layers.wrap);
+  texture.wrap.dataset.for = "shape";
+  width.wrap.dataset.for = "shape";
+  strokeStyle.wrap.dataset.for = "shape";
+  rough.wrap.dataset.for = "shape";
+  edges.wrap.dataset.for = "shape";
+  propertiesHost.append(ink.wrap, stroke.wrap, ground.wrap, border.wrap, fill.wrap, texture.wrap, width.wrap, strokeStyle.wrap, rough.wrap, edges.wrap, opacity.wrap, font.wrap, layers.wrap);
 }
 
 function group(label, rowClass = "choice-row") {
@@ -546,16 +664,38 @@ function group(label, rowClass = "choice-row") {
 }
 
 function syncProperties() {
-  const show = selected.size > 0 || !["selection", "hand", "eraser"].includes(tool);
+  const available = selected.size > 0 || !["selection", "hand", "eraser", "image"].includes(tool);
+  const show = available && propertiesOpen;
   propertiesHost.hidden = !show;
+  if (openPropertiesButton) openPropertiesButton.hidden = !available || propertiesOpen;
   const current = selectedElements();
+  const textOnly = current.length
+    ? current.every((element) => element.type === "text")
+    : tool === "text";
+  const imageOnly = current.length
+    ? current.every((element) => element.type === "image")
+    : tool === "image";
+  propertiesHost.querySelectorAll("[data-for]").forEach((node) => {
+    const audience = node.dataset.for;
+    if (audience === "text") node.hidden = !textOnly;
+    else if (audience === "shape") node.hidden = textOnly || imageOnly;
+  });
   const read = (key) => {
     if (!current.length) return style[key];
     const first = current[0][key];
     return current.every((element) => element[key] === first) ? first : null;
   };
   for (const button of propertiesHost.querySelectorAll(".swatch")) {
-    const value = read(button.dataset.kind === "stroke" ? "strokeColor" : "backgroundColor");
+    const field = button.dataset.kind === "stroke"
+      ? "strokeColor"
+      : button.dataset.kind === "ground"
+        ? "textFill"
+        : button.dataset.kind === "border"
+          ? "borderColor"
+          : "backgroundColor";
+    let value = read(field);
+    if ((field === "textFill" || field === "borderColor" || field === "strokeColor") && !value) value = "transparent";
+    if (field === "strokeColor" && value === "none") value = "transparent";
     button.setAttribute("aria-pressed", String(value === button.dataset.color));
   }
   for (const button of propertiesHost.querySelectorAll(".choice[data-group]")) {
@@ -566,7 +706,14 @@ function syncProperties() {
   const opacityValue = read("opacity");
   if (opacity && opacityValue != null && document.activeElement !== opacity) opacity.value = String(opacityValue);
   for (const input of propertiesHost.querySelectorAll(".color-picker")) {
-    const value = read(input.dataset.kind === "stroke" ? "strokeColor" : "backgroundColor");
+    const field = input.dataset.kind === "stroke"
+      ? "strokeColor"
+      : input.dataset.kind === "ground"
+        ? "textFill"
+        : input.dataset.kind === "border"
+          ? "borderColor"
+          : "backgroundColor";
+    const value = read(field);
     if (value && value !== "transparent" && document.activeElement !== input) input.value = value;
   }
 }
@@ -600,21 +747,26 @@ function duplicateSelection() {
   requestRender();
 }
 
+function hasStroke(element) {
+  return Boolean(element.strokeColor) && element.strokeColor !== "transparent" && element.strokeColor !== "none";
+}
+
 function isFilled(element) {
   return Boolean(element.backgroundColor) && element.backgroundColor !== "transparent";
 }
 
 function roughOptions(element) {
+  const stroked = hasStroke(element);
   const options = {
     seed: element.seed || 1,
     roughness: element.roughness ?? 1,
-    stroke: element.strokeColor,
-    strokeWidth: element.strokeWidth,
+    stroke: stroked ? element.strokeColor : "none",
+    strokeWidth: stroked ? (element.strokeWidth || 1) : 0,
     bowing: element.roughness ? 1 : 0,
     disableMultiStroke: element.roughness === 0,
   };
-  if (element.strokeStyle === "dashed") options.strokeLineDash = [12, 10];
-  if (element.strokeStyle === "dotted") options.strokeLineDash = [2, 8];
+  if (stroked && element.strokeStyle === "dashed") options.strokeLineDash = [12, 10];
+  if (stroked && element.strokeStyle === "dotted") options.strokeLineDash = [2, 8];
   if (isFilled(element)) {
     options.fill = element.backgroundColor;
     options.fillStyle = element.fillStyle || "hachure";
@@ -648,12 +800,15 @@ function roundedPolyPath(points, radius) {
 }
 
 function shapeDrawable(generator, element) {
-  if (element.type === "text") return null;
+  if (element.type === "text" || element.type === "image") return null;
+  const stroked = hasStroke(element);
+  const filled = isFilled(element);
+  const closed = element.type === "rectangle" || element.type === "sticky" || element.type === "ellipse" || element.type === "diamond";
+  if (!stroked && !filled) return null;
+  if (!stroked && !closed) return null;
   const options = roughOptions(element);
   const box = normalizeBox(element.x, element.y, element.width, element.height);
-  if ((element.type === "rectangle" || element.type === "sticky" || element.type === "ellipse" || element.type === "diamond") && (box.width < 1 || box.height < 1)) {
-    return null;
-  }
+  if (closed && (box.width < 1 || box.height < 1)) return null;
   if (element.type === "rectangle" || element.type === "sticky" || element.type === "diamond") {
     const points = element.type === "diamond"
       ? diamondPoly(box)
@@ -688,7 +843,7 @@ function shapeDrawable(generator, element) {
 }
 
 function arrowHeadDrawable(generator, element) {
-  if (element.type !== "arrow") return null;
+  if (element.type !== "arrow" || !hasStroke(element)) return null;
   const points = absPoints(element);
   if (points.length < 2) return null;
   const end = points[points.length - 1];
@@ -731,12 +886,36 @@ function wrapLines(context, text, maxWidth) {
   return lines.length ? lines : [""];
 }
 
+function paintTextFrame(context, element) {
+  if (element.type !== "text") return;
+  const box = boxOf(element);
+  const fill = element.textFill;
+  const border = element.borderColor;
+  const hasFill = fill && fill !== "transparent";
+  const hasBorder = border && border !== "transparent";
+  if (!hasFill && !hasBorder) return;
+  context.beginPath();
+  context.roundRect(box.x - 8, box.y - 4, box.width + 16, box.height + 8, 10);
+  if (hasFill) {
+    context.fillStyle = fill;
+    context.fill();
+  }
+  if (hasBorder) {
+    context.strokeStyle = border;
+    context.lineWidth = 2.5;
+    context.stroke();
+  }
+}
+
 function drawLabel(context, element) {
+  paintTextFrame(context, element);
   if (!element.text || (editing && editing.id === element.id)) return;
+  const letter = hasStroke(element) ? element.strokeColor : "#1e1e1e";
+  if (element.type !== "text" && !element.text) return;
   const box = boxOf(element);
   const fontSize = element.fontSize || 24;
   context.save();
-  context.fillStyle = element.strokeColor;
+  context.fillStyle = letter;
   context.font = `${fontSize}px ${FONT}`;
   const padding = element.type === "text" ? 4 : 14;
   const lines = wrapLines(context, element.text, Math.max(20, box.width - padding * 2));
@@ -756,6 +935,11 @@ function drawLabel(context, element) {
 function drawElement(context, roughCanvas, element) {
   context.save();
   context.globalAlpha = clamp(element.opacity ?? 100, 0, 100) / 100;
+  if (element.type === "image") {
+    paintImage(context, element, requestRender);
+    context.restore();
+    return;
+  }
   const body = shapeDrawable(roughCanvas.generator, element);
   if (body) roughCanvas.draw(body);
   const head = arrowHeadDrawable(roughCanvas.generator, element);
@@ -865,7 +1049,7 @@ function render() {
 function drawChrome() {
   ctx.save();
   ctx.lineWidth = 1;
-  ctx.strokeStyle = "#6965db";
+  ctx.strokeStyle = "#1c1a17";
   ctx.fillStyle = "#ffffff";
   if (marquee) {
     const origin = worldToScreen(marquee.x, marquee.y);
@@ -1040,6 +1224,20 @@ function onPointerDown(event) {
       return;
     }
     const hit = hitTest(elements, world.x, world.y, 8 / zoom);
+    if (hit && (event.ctrlKey || event.metaKey)) {
+      if (!selected.has(hit.id)) selected = new Set([hit.id]);
+      beginChange();
+      const copies = duplicateElements(elements, [...selected]);
+      elements = elements.concat(copies);
+      selected = new Set(copies.map((copy) => copy.id));
+      mode = "move";
+      moveIsDuplicate = true;
+      moveOrigins = copies.map((copy) => clone(copy));
+      showDupMark(event.clientX, event.clientY);
+      syncProperties();
+      requestRender();
+      return;
+    }
     if (hit) {
       if (event.shiftKey) {
         if (selected.has(hit.id)) selected.delete(hit.id);
@@ -1048,6 +1246,7 @@ function onPointerDown(event) {
         selected = new Set([hit.id]);
       }
       mode = "move";
+      moveIsDuplicate = false;
       moveOrigins = selectedElements().map((element) => clone(element));
       beginChange();
       syncProperties();
@@ -1061,6 +1260,11 @@ function onPointerDown(event) {
     beginChange();
     syncProperties();
     requestRender();
+    return;
+  }
+
+  if (tool === "image") {
+    importImages(world);
     return;
   }
 
@@ -1082,8 +1286,10 @@ function onPointerMove(event) {
   const screen = pointerPosition(event);
   const world = screenToWorld(screen.x, screen.y);
   eraserPointer = screen;
+  lastClient = { x: event.clientX, y: event.clientY, world };
+  ctrlHeld = event.ctrlKey || event.metaKey;
   if (!mode) {
-    updateCursor(world);
+    updateCursor(world, event.clientX, event.clientY);
     if (tool === "eraser") requestRender();
     return;
   }
@@ -1104,6 +1310,7 @@ function onPointerMove(event) {
     return;
   }
   if (mode === "move") {
+    if (moveIsDuplicate) showDupMark(event.clientX, event.clientY);
     const dx = world.x - pointerStart.world.x;
     const dy = world.y - pointerStart.world.y;
     const origins = new Map(moveOrigins.map((element) => [element.id, element]));
@@ -1126,7 +1333,7 @@ function onPointerMove(event) {
         points[index] = next;
         return withAbsPoints(resizeStart, points);
       }
-      const box = resizeBox(boxOf(resizeStart), resizeHandle, world, event.shiftKey);
+      const box = resizeBox(boxOf(resizeStart), resizeHandle, world, event.shiftKey || resizeStart.type === "image");
       return { ...resizeStart, ...box };
     });
     requestRender();
@@ -1168,8 +1375,10 @@ function onPointerUp(event) {
   marquee = null;
   draft = null;
   resizeStart = null;
+  moveIsDuplicate = false;
+  hideDupMark();
   if (!keepHistoryOpen) endChange();
-  updateCursor(screenToWorld(pointerPosition(event).x, pointerPosition(event).y));
+  updateCursor(screenToWorld(pointerPosition(event).x, pointerPosition(event).y), event.clientX, event.clientY);
   syncProperties();
   requestRender();
 }
@@ -1198,6 +1407,18 @@ canvas.addEventListener("pointerdown", onPointerDown);
 canvas.addEventListener("pointermove", onPointerMove);
 canvas.addEventListener("pointerup", onPointerUp);
 canvas.addEventListener("pointercancel", onPointerUp);
+canvas.addEventListener("dragover", (event) => {
+  if (!dataTransferImageFiles(event.dataTransfer).length) return;
+  event.preventDefault();
+  event.dataTransfer.dropEffect = "copy";
+});
+canvas.addEventListener("drop", async (event) => {
+  const files = dataTransferImageFiles(event.dataTransfer);
+  if (!files.length) return;
+  event.preventDefault();
+  const screen = pointerPosition(event);
+  await placeImageFiles(files, screenToWorld(screen.x, screen.y));
+});
 canvas.addEventListener("contextmenu", (event) => event.preventDefault());
 canvas.addEventListener("dblclick", (event) => {
   const screen = pointerPosition(event);
@@ -1271,6 +1492,11 @@ window.addEventListener("keydown", (event) => {
     openFind();
     return;
   }
+  if ((event.metaKey || event.ctrlKey) && key === "v") {
+    event.preventDefault();
+    pasteSnapshot();
+    return;
+  }
   if ((event.metaKey || event.ctrlKey) && event.code === "Slash" && !event.shiftKey) {
     event.preventDefault();
     openPalette();
@@ -1308,15 +1534,71 @@ window.addEventListener("keydown", (event) => {
   }
   if (event.metaKey || event.ctrlKey || event.altKey) return;
   const match = TOOLS.find((item) => item.keys.includes(key));
-  if (match) setTool(match.id);
+  if (match) {
+    if (match.id === "image") importImages();
+    else setTool(match.id);
+  }
 });
 
 window.addEventListener("keyup", (event) => {
   if (event.code === "Space") {
     spaceDown = false;
-    updateCursor();
   }
+  if (event.key === "Control" || event.key === "Meta") {
+    ctrlHeld = false;
+    if (!moveIsDuplicate) hideDupMark();
+  }
+  if (lastClient) updateCursor(lastClient.world, lastClient.x, lastClient.y);
+  else updateCursor();
 });
+
+window.addEventListener("keydown", (event) => {
+  if (event.key !== "Control" && event.key !== "Meta") return;
+  ctrlHeld = true;
+  if (lastClient) updateCursor(lastClient.world, lastClient.x, lastClient.y);
+}, true);
+
+window.addEventListener("blur", () => {
+  ctrlHeld = false;
+  if (!moveIsDuplicate) hideDupMark();
+});
+
+function viewCenterWorld() {
+  return screenToWorld(canvas.clientWidth / 2, canvas.clientHeight / 2);
+}
+
+async function placeImageFiles(files, at) {
+  const list = [...(files || [])];
+  if (!list.length) return false;
+  try {
+    const origin = at || viewCenterWorld();
+    const made = await filesToImageElements(list, {
+      x: origin.x - 120,
+      y: origin.y - 90,
+    }, style, 520);
+    if (!made.length) {
+      toast("No images found in that drop.");
+      return false;
+    }
+    beginChange();
+    elements = elements.concat(made);
+    selected = new Set(made.map((element) => element.id));
+    setTool("selection");
+    endChange();
+    requestRender();
+    toast(made.length === 1 ? "Image placed on the board." : `${made.length} images placed on the board.`);
+    return true;
+  } catch (error) {
+    toast(error && error.message ? error.message : "Could not import that image.");
+    return false;
+  }
+}
+
+async function importImages(at) {
+  const files = await pickImageFiles({ multiple: true });
+  if (!files.length) return;
+  await placeImageFiles(files, at);
+}
 
 function saveFile() {
   const blob = new Blob([serializeScene(elements)], { type: "application/json" });
@@ -1494,6 +1776,11 @@ async function passSnapshot() {
 }
 
 async function pasteSnapshot() {
+  const images = await clipboardImageFiles();
+  if (images.length) {
+    await placeImageFiles(images, viewCenterWorld());
+    return;
+  }
   try {
     replaceScene(parseScene(await navigator.clipboard.readText()));
     toast(phrases().pasted);
@@ -1677,6 +1964,16 @@ buildProperties();
 buildPaperSwatches();
 buildHelp();
 applyChrome();
+if (openPropertiesButton) {
+  openPropertiesButton.addEventListener("click", () => {
+    propertiesOpen = true;
+    syncProperties();
+  });
+}
+window.matchMedia("(max-width: 820px)").addEventListener("change", (event) => {
+  propertiesOpen = !event.matches;
+  syncProperties();
+});
 window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
   if (theme === "device") applyChrome();
 });

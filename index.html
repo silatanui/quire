@@ -3,145 +3,149 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>DrawExcal</title>
+  <title>Quire: a sketch board that stays in the browser</title>
+  <meta name="description" content="Quire is a paper-colored board for boxes, arrows, handwriting, and sticky notes. Drawings stay in this browser.">
+  <link rel="icon" href="icon.svg?v=3" type="image/svg+xml">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@600;700&family=Patrick+Hand&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/app.css">
+  <link href="https://fonts.googleapis.com/css2?family=Cabin+Condensed:wght@400;500;600;700&family=Varela+Round&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/home.css">
 </head>
-<body>
-  <canvas id="canvas" aria-label="Drawing canvas"></canvas>
-  <textarea id="text-editor" aria-label="Text" hidden></textarea>
-
-  <header class="topbar">
-    <div class="island brand-island">
-      <button type="button" id="menu-button" class="icon-button" aria-haspopup="menu" aria-expanded="false" aria-label="Board menu" title="Board menu">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M5 7h14M5 12h14M5 17h14"/></svg>
-      </button>
-      <div id="menu" class="popover menu-panel" role="menu" hidden>
-        <button type="button" id="action-open" role="menuitem"><span data-i18n="open">Open a file</span><span>Ctrl+O</span></button>
-        <button type="button" id="action-save" role="menuitem"><span data-i18n="save">Keep a copy…</span><span>Ctrl+S</span></button>
-        <button type="button" id="action-export" role="menuitem"><span data-i18n="export">Picture export…</span><span>Ctrl+Shift+E</span></button>
-        <button type="button" id="action-pass" role="menuitem"><span data-i18n="pass">Pass a snapshot</span></button>
-        <button type="button" id="action-palette" role="menuitem"><span data-i18n="palette">Jump bar</span><span>Ctrl+/</span></button>
-        <button type="button" id="action-find" role="menuitem"><span data-i18n="find">Look up words</span><span>Ctrl+F</span></button>
-        <button type="button" id="action-help" role="menuitem"><span data-i18n="help">How this works</span><span>?</span></button>
-        <button type="button" id="action-clear" role="menuitem"><span data-i18n="fresh">Start fresh</span></button>
-        <div class="menu-rule"></div>
-        <p class="menu-label" data-i18n="shelf">Studio shelf</p>
-        <button type="button" id="action-grid" role="menuitemcheckbox" aria-pressed="false"><span data-i18n="grid">Dot grid</span></button>
-        <button type="button" id="action-snap" role="menuitemcheckbox" aria-pressed="false"><span data-i18n="snap">Snap to dots</span></button>
-        <button type="button" id="action-about" role="menuitem"><span data-i18n="about">About this board</span></button>
-        <div class="menu-rule"></div>
-        <div class="tune">
-          <div class="tune-row">
-            <span data-i18n="mood">Mood</span>
-            <div class="theme-switch" role="group" aria-label="Mood">
-              <button type="button" data-theme="day" aria-pressed="true" title="Day">☀</button>
-              <button type="button" data-theme="dusk" aria-pressed="false" title="Dusk">☾</button>
-              <button type="button" data-theme="device" aria-pressed="false" title="Match device">▣</button>
-            </div>
-          </div>
-          <label class="tune-row">
-            <span data-i18n="wording">Wording</span>
-            <select id="language" aria-label="Wording">
-              <option value="en">English</option>
-              <option value="es">Español</option>
-              <option value="fr">Français</option>
-            </select>
-          </label>
-          <div class="tune-block">
-            <span data-i18n="paper">Paper</span>
-            <div id="paper-swatches" class="paper-row"></div>
-          </div>
-          <label class="tune-row">
-            <span data-i18n="mark">Your mark</span>
-            <input id="mark-input" type="text" maxlength="32" placeholder="A name in the corner">
-          </label>
-        </div>
-      </div>
-    </div>
-
-    <div class="island tool-island" id="tools" role="toolbar" aria-label="Shapes"></div>
+<body id="top">
+  <header class="nav">
+    <a class="brand" href="#top">
+      <img src="images/quire-mark.svg?v=3" width="28" height="28" alt="">
+      Quire
+    </a>
+    <nav class="nav-links" aria-label="Page">
+      <a href="#sheet">The sheet</a>
+      <a href="#tools">Tools</a>
+      <a href="#keep">Keep</a>
+    </nav>
+    <nav class="nav-apps" aria-label="Open Quire">
+      <a class="open" href="board.html">Board</a>
+      <a class="open open-folio" href="deck.html">Folio</a>
+    </nav>
   </header>
 
-  <div id="properties" class="island properties" hidden></div>
-  <p id="hint" class="hint" data-i18n="hint">To move the canvas, hold the scroll wheel or Space while dragging, or use the hand tool.</p>
-  <p id="storage-note" class="note">
-    <span data-i18n="storage">Drawings stay in this browser. Keep a copy so clearing site data does not take them.</span>
-    <button type="button" id="dismiss-note" data-i18n="dismiss">Dismiss</button>
-  </p>
-  <p id="toast" class="toast" hidden></p>
+  <main>
+    <section class="hero">
+      <div>
+        <p class="kicker">Portfolio studio</p>
+        <h1>Draw the thought before it leaves.</h1>
+        <p class="lede">Quire is a quiet board for boxes, arrows, handwriting, and sticky notes. Strokes look sketched. The page can be white, blue, or night. The drawing stays in this browser, with no account and no room full of other cursors.</p>
+        <div class="actions">
+          <a class="primary" href="board.html">Open the board</a>
+          <a class="quiet" href="deck.html">Open the folio</a>
+        </div>
+      </div>
+      <div class="stage">
+        <div class="sheet" aria-hidden="true">
+          <svg viewBox="0 0 520 420">
+            <rect class="ink wash" x="48" y="54" width="180" height="110" rx="8"/>
+            <rect class="ink" x="48" y="54" width="180" height="110" rx="8"/>
+            <path class="ink late" d="M228 110h70"/>
+            <path class="ink late" d="M286 100l16 10-16 10"/>
+            <path class="ink later" d="M330 70l70 90-70 90 70-90-70-90z"/>
+            <path class="ink later" d="M70 230c30-24 40 22 70 0s40 26 78-8 48 18 90-6"/>
+            <path class="ink" d="M78 300h150M78 324h110"/>
+          </svg>
+        </div>
+        <p class="float-note">Say it on paper, then keep the sheet.</p>
+      </div>
+    </section>
 
-  <footer class="bottombar">
-    <div class="island zoom-island" aria-label="Canvas actions">
-      <button type="button" id="zoom-out" aria-label="Zoom out" title="Zoom out">−</button>
-      <button type="button" id="zoom-reset" aria-label="Reset zoom" title="Reset zoom">100%</button>
-      <button type="button" id="zoom-in" aria-label="Zoom in" title="Zoom in">+</button>
-      <span class="sep"></span>
-      <button type="button" id="undo" aria-label="Undo" title="Undo — Ctrl+Z" disabled>Undo</button>
-      <button type="button" id="redo" aria-label="Redo" title="Redo — Ctrl+Shift+Z" disabled>Redo</button>
+    <section class="photos" aria-label="Paper, up close">
+      <figure>
+        <img src="images/sketch-notebook.jpg" alt="Hands sketching a small grid in a notebook beside a laptop.">
+        <figcaption>A notebook still does the job a slide cannot. Photo by Yan Krukau on Pexels.</figcaption>
+      </figure>
+      <figure>
+        <img src="images/pencil-hands.jpg" alt="A close view of a hand drawing a line figure with a pencil.">
+        <figcaption>The line is the point. Photo by Pavel Danilyuk on Pexels.</figcaption>
+      </figure>
+    </section>
+
+    <section class="band" id="sheet">
+      <h2>Three things, and then you are drawing.</h2>
+      <p class="intro">Quire is not a studio suite. It is the part of a meeting where someone reaches for paper: a box, an arrow, a word, a note stuck to the side.</p>
+      <div class="trio">
+        <article>
+          <h3>Ink</h3>
+          <p>Pick a color, a weight, and a rhythm. Solid, broken, or dotted. The stroke can sit steady, or wobble like a fast pencil.</p>
+        </article>
+        <article>
+          <h3>Paper</h3>
+          <p>The sheet color is yours. Day or dusk changes the chrome around it. The drawing itself keeps the paper you chose.</p>
+        </article>
+        <article>
+          <h3>Yours</h3>
+          <p>A refresh does not throw the board away. It lives in this browser. Pass a snapshot when someone else should have a copy.</p>
+        </article>
+      </div>
+
+      <div class="film">
+        <figure>
+          <video src="images/quire-create.mp4" poster="images/quire-create-poster.jpg" autoplay muted loop playsinline controls></video>
+          <figcaption>Title boards, flow diagrams, tool lists, and talk takeaways: the kinds of sheets Quire is for.</figcaption>
+        </figure>
+        <div class="film-copy">
+          <h2>What you can make on the sheet.</h2>
+          <p>Explain a system with boxes and arrows. Lay out a talk as Folio pages. Keep a working board for the messy middle. Quire is the quiet place those sketches live before the slide deck gets polished elsewhere.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="tools" id="tools">
+      <h2>The tools sit in a row, and they stay out of the way.</h2>
+      <p class="intro">Selection, shapes, arrows, lines, ink, text, sticky notes, and an eraser. Lock a tool when you are laying down a dozen of the same thing. Pan with the hand, the space bar, or the middle mouse button.</p>
+      <div class="tool-row">
+        <span>Hand <b>H</b></span>
+        <span>Select <b>V</b></span>
+        <span>Rectangle <b>R</b></span>
+        <span>Diamond <b>D</b></span>
+        <span>Ellipse <b>O</b></span>
+        <span>Arrow <b>A</b></span>
+        <span>Line <b>L</b></span>
+        <span>Draw <b>P</b></span>
+        <span>Text <b>T</b></span>
+        <span>Sticky <b>N</b></span>
+        <span>Eraser <b>E</b></span>
+      </div>
+    </section>
+
+    <section class="keep" id="keep">
+      <img src="images/pencil-hands.jpg" alt="A hand drawing a line figure with a pencil.">
+      <div>
+        <h2>Keep a copy when the browser is not enough.</h2>
+        <p class="intro">Save a JSON snapshot, export a picture on the paper color you picked, or find a word already written on the sheet. Undo still reaches backward if you clear the board by mistake. There is no chat room hiding behind the menu.</p>
+        <div class="actions">
+          <a class="primary" href="board.html">Start a sheet</a>
+        </div>
+      </div>
+    </section>
+
+    <section class="close">
+      <div>
+        <h2>The board is the product.</h2>
+        <p class="intro">Open it, draw one box, and leave the rest for later.</p>
+      </div>
+      <a class="primary" href="board.html">Open the board</a>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="footer-brand">
+      <strong>Quire</strong>
+      <p>A portfolio project that demonstrates reverse-engineering skill. Public whiteboard behavior was studied with <a href="https://github.com/morluto/rea">REA</a>, then rebuilt here as an original board, not a copy of anyone else’s source.</p>
+    </div>
+    <div class="footer-aside">
+      <nav aria-label="Open Quire">
+        <a href="board.html">Board</a>
+        <a href="deck.html">Folio</a>
+      </nav>
+      <p>Sketch strokes by <a href="https://github.com/rough-stuff/rough">rough.js</a>. Photos and the clip are from Pexels.</p>
     </div>
   </footer>
-
-  <dialog id="help-dialog">
-    <form method="dialog">
-      <h2 data-i18n="helpTitle">How this works</h2>
-      <div id="help-list"></div>
-      <p class="credit" data-i18n="credit">DrawExcal is a local board. Sketch strokes use rough.js. Nothing here signs you in or phones a server.</p>
-      <button type="submit" class="primary" data-i18n="close">Close</button>
-    </form>
-  </dialog>
-
-  <dialog id="export-dialog">
-    <form method="dialog">
-      <h2 data-i18n="exportTitle">Picture export</h2>
-      <p data-i18n="exportHint">A still of the whole drawing, on the paper color you picked.</p>
-      <div class="dialog-actions">
-        <button type="button" id="export-png" class="primary" data-i18n="downloadPng">Download PNG</button>
-        <button type="button" id="export-copy" data-i18n="copyPicture">Copy picture</button>
-        <button type="submit" data-i18n="close">Close</button>
-      </div>
-    </form>
-  </dialog>
-
-  <dialog id="palette-dialog">
-    <form method="dialog">
-      <input id="palette-input" type="search" data-i18n-placeholder="palettePlaceholder" placeholder="Jump to a command" autocomplete="off">
-      <div id="palette-list" class="choice-list"></div>
-    </form>
-  </dialog>
-
-  <dialog id="find-dialog">
-    <form method="dialog">
-      <h2 data-i18n="findTitle">Look up words</h2>
-      <input id="find-input" type="search" data-i18n-placeholder="findPlaceholder" placeholder="Words on the board" autocomplete="off">
-      <div id="find-results" class="choice-list"></div>
-    </form>
-  </dialog>
-
-  <dialog id="about-dialog">
-    <form method="dialog">
-      <h2 data-i18n="aboutTitle">About this board</h2>
-      <p data-i18n="aboutBody">This is a private studio on your machine. Pass a snapshot when you want someone else to have a copy. There is no account, no chat room, and no live session.</p>
-      <button type="submit" class="primary" data-i18n="close">Close</button>
-    </form>
-  </dialog>
-
-  <dialog id="reset-dialog">
-    <form method="dialog">
-      <h2 data-i18n="freshTitle">Start fresh?</h2>
-      <p data-i18n="freshBody">The board clears. Undo can bring the drawing back.</p>
-      <div class="dialog-actions">
-        <button type="submit" value="cancel" data-i18n="keep">Keep it</button>
-        <button type="submit" class="primary" value="ok" data-i18n="clearIt">Clear it</button>
-      </div>
-    </form>
-  </dialog>
-
-  <input id="file-input" type="file" accept="application/json,.json" hidden>
-
-  <script src="js/rough.js"></script>
-  <script type="module" src="js/main.js"></script>
 </body>
 </html>
