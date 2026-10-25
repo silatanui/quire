@@ -302,6 +302,7 @@ button:disabled { opacity: 0.45; cursor: default; }
   font-family: "Patrick Hand", "Comic Sans MS", cursive;
   line-height: 1.25;
   overflow: hidden;
+  box-sizing: border-box;
 }
 #editor:focus { outline: 1px dashed rgba(27, 27, 31, 0.35); }
 
@@ -491,13 +492,48 @@ body.presenting .panel-scrim { display: none !important; }
 }
 .folio-properties button.swatch[aria-pressed="true"] { outline: 2px solid #ff0000; outline-offset: 1px; }
 .folio-properties button:hover { background: #3c3c48; }
-.folio-properties .color-picker {
+.folio-properties .color-chip {
+  position: relative;
   width: 28px;
   height: 28px;
-  padding: 0;
+  border-radius: 999px;
+  padding: 2px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  cursor: pointer;
+  background: conic-gradient(from 210deg, #ff0000, #f08c00, #ffec99, #2f9e44, #1971c2, #6741d9, #c2255c, #ff0000);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.22);
+}
+.folio-properties .color-chip-face {
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  background: var(--chip, #ffffff);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.28), 0 0 0 1px rgba(255, 255, 255, 0.35);
+}
+.folio-properties .color-picker-native {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
   border: 0;
-  border-radius: 7px;
-  background: transparent;
+  padding: 0;
+}
+.folio-properties .recent-swatches {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  padding-left: 6px;
+  margin-left: 2px;
+  border-left: 1px solid rgba(255, 255, 255, 0.16);
+}
+.folio-properties .recent-swatches[hidden] { display: none; }
+.folio-properties button.swatch.recent {
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.28);
 }
 .page-panel { display: flex; flex-direction: column; gap: 8px; }
 .page-panel[hidden] { display: none; }

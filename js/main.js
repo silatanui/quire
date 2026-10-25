@@ -7,7 +7,11 @@ import {
   constrainBox,
   createElement,
   diamondPoly,
+  trianglePoly,
   duplicateElements,
+  elementCenter,
+  applyElementTransform,
+  flipElements,
   handlesFor,
   hitHandle,
   hitTest,
@@ -15,11 +19,15 @@ import {
   parseScene,
   reorder,
   resizeBox,
+  rotateElements,
+  rotatedCorners,
   sceneBounds,
   serializeScene,
   snapAngle,
   translate,
   withAbsPoints,
+  worldBounds,
+  worldToLocal,
   intersects,
 } from "./model.js";
 import {
@@ -29,6 +37,12 @@ import {
   paintImage,
   pickImageFiles,
 } from "./media.js";
+import {
+  colorKindField,
+  loadRecentColors,
+  patchForColorKind,
+  rememberColor,
+} from "./colors.js";
 
 const FONT = '"Varela Round", "Segoe UI", sans-serif';
 const STORAGE_KEY = "drawexcal-v1";
@@ -95,8 +109,10 @@ const TEXT_BORDERS = ["transparent", "#1e1e1e", "#e03131", "#2f9e44", "#1971c2",
 const TOOLS = [
   { id: "hand", label: "Hand (panning tool)", keys: ["h"], title: "H" },
   { id: "selection", label: "Selection", keys: ["v", "1"], title: "V or 1" },
+  { id: "rotate", label: "Rotate", keys: ["u"], title: "U" },
   { id: "rectangle", label: "Rectangle", keys: ["r", "2"], title: "R or 2" },
   { id: "diamond", label: "Diamond", keys: ["d", "3"], title: "D or 3" },
+  { id: "triangle", label: "Triangle", keys: ["g"], title: "G" },
   { id: "ellipse", label: "Ellipse", keys: ["o", "4"], title: "O or 4" },
   { id: "arrow", label: "Arrow", keys: ["a", "5"], title: "A or 5" },
   { id: "line", label: "Line", keys: ["l", "6"], title: "L or 6" },
@@ -150,6 +166,9 @@ let pointerStart = null;
 let moveOrigins = [];
 let resizeHandle = null;
 let resizeStart = null;
+let rotateOrigins = [];
+let rotatePointerAngle = 0;
+let rotatePivot = null;
 let marqueeBase = new Set();
 let eraserPointer = null;
 let ctrlHeld = false;
@@ -163,8 +182,10 @@ let frame = 0;
 const ICONS = {
   hand: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 11V6.5a1.5 1.5 0 0 1 3 0V11"/><path d="M11 10.5V5.5a1.5 1.5 0 0 1 3 0V11"/><path d="M14 10.8V7.5a1.5 1.5 0 0 1 3 0V13c0 3.2-2 6-5.2 6H11c-2.4 0-4-1.2-4.8-3L5 13.2a1.6 1.6 0 0 1 2.6-1.7L8 13"/></svg>',
   selection: '<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M5 3.8 5.4 18.2 9.4 14.4 13.2 21.2 15.6 20 11.8 13.4 17.6 13.1Z"/></svg>',
+  rotate: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4.5 12a7.5 7.5 0 0 1 12.8-5.3"/><path d="M17.5 4.5v4h-4"/><path d="M19.5 12a7.5 7.5 0 0 1-12.8 5.3"/><path d="M6.5 19.5v-4h4"/></svg>',
   rectangle: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="6" width="16" height="12" rx="1.5"/></svg>',
   diamond: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3.5 20.5 12 12 20.5 3.5 12Z"/></svg>',
+  triangle: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 4 20 19H4Z"/></svg>',
   ellipse: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><ellipse cx="12" cy="12" rx="8" ry="6"/></svg>',
   arrow: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 17 17.5 6.5"/><path d="M11 6h7v7"/></svg>',
   line: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 18 18 6"/></svg>',
@@ -353,15 +374,20 @@ function updateCursor(world, clientX = 0, clientY = 0) {
     hideDupMark();
     return;
   }
-  if (tool === "selection" && world && selected.size === 1 && !ctrlHeld) {
+  if ((tool === "selection" || tool === "rotate") && world && selected.size === 1 && !ctrlHeld) {
     const element = elements.find((item) => selected.has(item.id));
     const handle = element && hitHandle(element, world.x, world.y, 8 / zoom);
-    const cursors = { nw: "nwse-resize", se: "nwse-resize", ne: "nesw-resize", sw: "nesw-resize", n: "ns-resize", s: "ns-resize", e: "ew-resize", w: "ew-resize", start: "grab", end: "grab" };
+    const cursors = { nw: "nwse-resize", se: "nwse-resize", ne: "nesw-resize", sw: "nesw-resize", n: "ns-resize", s: "ns-resize", e: "ew-resize", w: "ew-resize", start: "grab", end: "grab", rotate: "grab" };
     if (handle && cursors[handle]) {
       canvas.style.cursor = cursors[handle];
       hideDupMark();
       return;
     }
+  }
+  if (tool === "rotate") {
+    canvas.style.cursor = "grab";
+    hideDupMark();
+    return;
   }
   if (tool === "selection" && world) {
     const hit = hitTest(elements, world.x, world.y, 8 / zoom);
@@ -385,17 +411,30 @@ function selectedElements() {
 }
 
 function applyStyle(partial, commit) {
-  style = { ...style, ...partial };
+  if (partial.textColor !== undefined) {
+    style = { ...style, textColor: partial.textColor, strokeColor: partial.textColor };
+  } else {
+    style = { ...style, ...partial };
+  }
   if (selected.size) {
     if (!styleGesture) {
       beginChange();
       styleGesture = true;
     }
-    elements = elements.map((element) => (selected.has(element.id) ? { ...element, ...partial } : element));
+    elements = elements.map((element) => {
+      if (!selected.has(element.id)) return element;
+      if (partial.textColor !== undefined) {
+        const next = { ...element, textColor: partial.textColor };
+        if (element.type === "text") next.strokeColor = partial.textColor;
+        return next;
+      }
+      return { ...element, ...partial };
+    });
   }
   if (commit && styleGesture) endChange();
   if (commit && !selected.size) persistSoon();
   syncProperties();
+  if (editing) positionEditor();
   requestRender();
 }
 
@@ -435,27 +474,58 @@ function buildTools() {
   }
 }
 
-function swatch(color, kind) {
+function applyPickedColor(kind, color, commit = true) {
+  applyStyle(patchForColorKind(kind, color), commit);
+  if (!commit || !color || color === "transparent") return;
+  rememberColor(color);
+  refreshRecentSwatches();
+}
+
+function swatch(color, kind, options = {}) {
   const button = document.createElement("button");
   button.type = "button";
-  button.className = `swatch${color === "transparent" ? " none" : ""}`;
+  button.className = `swatch${color === "transparent" ? " none" : ""}${options.recent ? " recent" : ""}`;
   button.style.background = color === "transparent" ? "" : color;
   button.dataset.color = color;
   button.dataset.kind = kind;
-  const emptyLabel = { stroke: "No outline", fill: "No wash", ground: "No background", border: "No frame" };
-  button.title = color === "transparent" ? (emptyLabel[kind] || "None") : color;
+  if (options.recent) button.dataset.recent = "1";
+  const emptyLabel = { stroke: "No outline", fill: "No wash", ground: "No background", border: "No frame", letter: "Default ink" };
+  button.title = color === "transparent" ? (emptyLabel[kind] || "None") : (options.recent ? `Recent ${color}` : color);
   button.setAttribute("aria-label", button.title);
-  button.addEventListener("click", () => {
-    const patch = kind === "stroke"
-      ? { strokeColor: color }
-      : kind === "ground"
-        ? { textFill: color }
-        : kind === "border"
-          ? { borderColor: color }
-          : { backgroundColor: color };
-    applyStyle(patch, true);
-  });
+  button.addEventListener("click", () => applyPickedColor(kind, color, true));
   return button;
+}
+
+function fillRecentHost(host, kind, fixed) {
+  host.replaceChildren();
+  const skip = new Set(fixed.filter((color) => color !== "transparent"));
+  const recent = loadRecentColors().filter((color) => !skip.has(color));
+  if (!recent.length) {
+    host.hidden = true;
+    return;
+  }
+  host.hidden = false;
+  for (const color of recent) host.append(swatch(color, kind, { recent: true }));
+}
+
+function refreshRecentSwatches() {
+  propertiesHost.querySelectorAll("[data-recent-host]").forEach((host) => {
+    fillRecentHost(host, host.dataset.kind, (host.dataset.fixed || "").split(",").filter(Boolean));
+  });
+  syncProperties();
+}
+
+function appendColorControls(row, kind, colors) {
+  const fixed = colors.slice();
+  for (const color of fixed) row.append(swatch(color, kind));
+  const recentHost = document.createElement("div");
+  recentHost.className = "recent-swatches";
+  recentHost.dataset.recentHost = "1";
+  recentHost.dataset.kind = kind;
+  recentHost.dataset.fixed = fixed.filter((color) => color !== "transparent").join(",");
+  fillRecentHost(recentHost, kind, fixed);
+  row.append(recentHost);
+  row.append(colorPicker(kind));
 }
 
 function choice(label, group, value) {
@@ -516,28 +586,47 @@ function stackIcon(kind) {
   return `<svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><path d="${paths[kind]}" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 }
 
+function defaultPickerColor(kind) {
+  if (kind === "letter") {
+    return style.textColor && style.textColor !== "transparent"
+      ? style.textColor
+      : (style.strokeColor && style.strokeColor !== "transparent" ? style.strokeColor : "#1e1e1e");
+  }
+  if (kind === "border") return "#1e1e1e";
+  if (kind === "stroke") return style.strokeColor && style.strokeColor !== "transparent" ? style.strokeColor : "#1e1e1e";
+  if (kind === "ground") return "#fff3bf";
+  return "#ffffff";
+}
+
 function colorPicker(kind) {
+  const wrap = document.createElement("label");
+  wrap.className = "color-chip";
+  wrap.dataset.kind = kind;
+  const titles = {
+    letter: "More ink colors",
+    stroke: "More outline colors",
+    border: "More frame colors",
+    ground: "More background colors",
+    fill: "More wash colors",
+  };
+  wrap.title = titles[kind] || "More colors";
+  const face = document.createElement("span");
+  face.className = "color-chip-face";
+  const start = defaultPickerColor(kind);
+  face.style.setProperty("--chip", start);
   const input = document.createElement("input");
   input.type = "color";
-  input.className = "color-picker";
+  input.className = "color-picker-native";
   input.dataset.kind = kind;
-  input.value = kind === "stroke" || kind === "border"
-    ? (kind === "border" ? "#1e1e1e" : (style.strokeColor && style.strokeColor !== "transparent" ? style.strokeColor : "#1e1e1e"))
-    : kind === "ground" ? "#fff3bf" : "#ffffff";
-  input.title = kind === "stroke" ? "Custom outline" : kind === "border" ? "Custom frame" : kind === "ground" ? "Custom background" : "Custom wash";
-  input.setAttribute("aria-label", input.title);
+  input.value = start;
+  input.setAttribute("aria-label", wrap.title);
   input.addEventListener("input", () => {
-    const patch = kind === "stroke"
-      ? { strokeColor: input.value }
-      : kind === "ground"
-        ? { textFill: input.value }
-        : kind === "border"
-          ? { borderColor: input.value }
-          : { backgroundColor: input.value };
-    applyStyle(patch, false);
+    face.style.setProperty("--chip", input.value);
+    applyPickedColor(kind, input.value, false);
   });
-  input.addEventListener("change", () => applyStyle({}, true));
-  return input;
+  input.addEventListener("change", () => applyPickedColor(kind, input.value, true));
+  wrap.append(face, input);
+  return wrap;
 }
 
 function panelHead(title, onClose) {
@@ -562,27 +651,19 @@ function buildProperties() {
     syncProperties();
   }));
   const ink = group("Ink", "color-row");
-  STROKE_COLORS.filter((color) => color !== "transparent").slice(0, 5).forEach((color) => ink.row.append(swatch(color, "stroke")));
-  const inkPicker = colorPicker("stroke");
-  inkPicker.title = "Custom ink";
-  inkPicker.setAttribute("aria-label", "Custom ink");
-  ink.row.append(inkPicker);
-  ink.wrap.dataset.for = "text";
+  appendColorControls(ink.row, "letter", STROKE_COLORS.filter((color) => color !== "transparent").slice(0, 5));
+  ink.wrap.dataset.for = "letter";
   const stroke = group("Outline", "color-row");
-  STROKE_COLORS.slice(0, 6).forEach((color) => stroke.row.append(swatch(color, "stroke")));
-  stroke.row.append(colorPicker("stroke"));
+  appendColorControls(stroke.row, "stroke", STROKE_COLORS.slice(0, 6));
   stroke.wrap.dataset.for = "shape";
   const ground = group("Background", "color-row");
-  TEXT_GROUNDS.forEach((color) => ground.row.append(swatch(color, "ground")));
-  ground.row.append(colorPicker("ground"));
+  appendColorControls(ground.row, "ground", TEXT_GROUNDS);
   ground.wrap.dataset.for = "text";
   const border = group("Frame", "color-row");
-  TEXT_BORDERS.forEach((color) => border.row.append(swatch(color, "border")));
-  border.row.append(colorPicker("border"));
+  appendColorControls(border.row, "border", TEXT_BORDERS);
   border.wrap.dataset.for = "text";
   const fill = group("Wash", "color-row");
-  FILL_COLORS.slice(0, 5).forEach((color) => fill.row.append(swatch(color, "fill")));
-  fill.row.append(colorPicker("fill"));
+  appendColorControls(fill.row, "fill", FILL_COLORS.slice(0, 5));
   fill.wrap.dataset.for = "shape";
   const texture = group("Texture");
   texture.row.append(choice("Lines", "fillStyle", "hachure"), choice("Cross", "fillStyle", "cross-hatch"), choice("Flat", "fillStyle", "solid"));
@@ -626,7 +707,35 @@ function buildProperties() {
   opacity.row.append(slider, scale);
   const font = group("Lettering");
   font.row.append(choice("S", "fontSize", 16), choice("M", "fontSize", 24), choice("L", "fontSize", 40));
-  font.wrap.dataset.for = "text";
+  font.wrap.dataset.for = "letter";
+  const align = group("Align");
+  align.row.append(
+    iconChoice(alignIcon("left"), "align", "left", "Align left"),
+    iconChoice(alignIcon("center"), "align", "center", "Align center"),
+    iconChoice(alignIcon("right"), "align", "right", "Align right"),
+  );
+  align.wrap.dataset.for = "letter";
+  const place = group("Place");
+  place.row.append(
+    iconChoice(placeIcon("top"), "verticalAlign", "top", "Place at top"),
+    iconChoice(placeIcon("middle"), "verticalAlign", "middle", "Place in middle"),
+    iconChoice(placeIcon("bottom"), "verticalAlign", "bottom", "Place at bottom"),
+  );
+  place.wrap.dataset.for = "letter";
+  const flip = group("Flip");
+  [
+    ["h", "Flip horizontal"],
+    ["v", "Flip vertical"],
+  ].forEach(([axis, label]) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "choice icon-choice";
+    button.title = label;
+    button.setAttribute("aria-label", label);
+    button.innerHTML = flipIcon(axis);
+    button.addEventListener("click", () => flipSelection(axis));
+    flip.row.append(button);
+  });
   const layers = group("Stack");
   [
     ["floor", "back", "Send to the floor"],
@@ -648,7 +757,54 @@ function buildProperties() {
   strokeStyle.wrap.dataset.for = "shape";
   rough.wrap.dataset.for = "shape";
   edges.wrap.dataset.for = "shape";
-  propertiesHost.append(ink.wrap, stroke.wrap, ground.wrap, border.wrap, fill.wrap, texture.wrap, width.wrap, strokeStyle.wrap, rough.wrap, edges.wrap, opacity.wrap, font.wrap, layers.wrap);
+  propertiesHost.append(ink.wrap, stroke.wrap, ground.wrap, border.wrap, fill.wrap, texture.wrap, width.wrap, strokeStyle.wrap, rough.wrap, edges.wrap, opacity.wrap, font.wrap, align.wrap, place.wrap, flip.wrap, layers.wrap);
+}
+
+function placeIcon(kind) {
+  const marks = {
+    top: ['M3 4h12', 'M5 8h8', 'M6.5 12h5'],
+    middle: ['M5 5h8', 'M3 9.5h12', 'M5 14h8'],
+    bottom: ['M6.5 6h5', 'M5 10h8', 'M3 14h12'],
+  };
+  const lines = (marks[kind] || marks.middle).map((d) => `<path d="${d}"/>`).join("");
+  return `<svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">${lines}</svg>`;
+}
+
+function flipIcon(axis) {
+  if (axis === "h") {
+    return '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3v18"/><path d="M7 8 3.5 12 7 16"/><path d="M17 8l3.5 4L17 16"/><path d="M3.5 12H7m10 0h3.5"/><path d="M14 6h4v12h-4"/><path d="M10 6H6v12h4" opacity=".45"/></svg>';
+  }
+  return '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 12h18"/><path d="M8 7 12 3.5 16 7"/><path d="M8 17l4 3.5L16 17"/><path d="M12 3.5V7m0 10v3.5"/><path d="M6 14v4h12v-4"/><path d="M6 10V6h12v4" opacity=".45"/></svg>';
+}
+
+function flipSelection(axis) {
+  if (!selected.size) return;
+  beginChange();
+  elements = flipElements(elements, [...selected], axis);
+  endChange();
+  syncProperties();
+  requestRender();
+}
+
+function beginRotateGesture(list, world) {
+  rotateOrigins = list.map((element) => clone(element));
+  rotatePivot = rotateOrigins.length === 1
+    ? elementCenter(rotateOrigins[0])
+    : {
+        x: rotateOrigins.reduce((sum, element) => sum + elementCenter(element).x, 0) / rotateOrigins.length,
+        y: rotateOrigins.reduce((sum, element) => sum + elementCenter(element).y, 0) / rotateOrigins.length,
+      };
+  rotatePointerAngle = Math.atan2(world.y - rotatePivot.y, world.x - rotatePivot.x);
+  mode = "rotate";
+}
+
+function alignIcon(kind) {
+  const rows = {
+    left: ["M2 3.5h14", "M2 8h8", "M2 12.5h11"],
+    center: ["M2 3.5h14", "M5 8h8", "M3.5 12.5h11"],
+    right: ["M2 3.5h14", "M8 8h8", "M5 12.5h11"],
+  };
+  return `<svg width="22" height="16" viewBox="0 0 18 16" aria-hidden="true"><path d="${rows[kind].join("")}" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>`;
 }
 
 function group(label, rowClass = "choice-row") {
@@ -664,7 +820,7 @@ function group(label, rowClass = "choice-row") {
 }
 
 function syncProperties() {
-  const available = selected.size > 0 || !["selection", "hand", "eraser", "image"].includes(tool);
+  const available = selected.size > 0 || !["selection", "hand", "eraser", "image", "rotate"].includes(tool);
   const show = available && propertiesOpen;
   propertiesHost.hidden = !show;
   if (openPropertiesButton) openPropertiesButton.hidden = !available || propertiesOpen;
@@ -672,12 +828,16 @@ function syncProperties() {
   const textOnly = current.length
     ? current.every((element) => element.type === "text")
     : tool === "text";
+  const lettering = current.length
+    ? current.every((element) => element.type === "text" || isLabelShape(element))
+    : tool === "text";
   const imageOnly = current.length
     ? current.every((element) => element.type === "image")
     : tool === "image";
   propertiesHost.querySelectorAll("[data-for]").forEach((node) => {
     const audience = node.dataset.for;
     if (audience === "text") node.hidden = !textOnly;
+    else if (audience === "letter") node.hidden = !lettering;
     else if (audience === "shape") node.hidden = textOnly || imageOnly;
   });
   const read = (key) => {
@@ -686,35 +846,37 @@ function syncProperties() {
     return current.every((element) => element[key] === first) ? first : null;
   };
   for (const button of propertiesHost.querySelectorAll(".swatch")) {
-    const field = button.dataset.kind === "stroke"
-      ? "strokeColor"
-      : button.dataset.kind === "ground"
-        ? "textFill"
-        : button.dataset.kind === "border"
-          ? "borderColor"
-          : "backgroundColor";
-    let value = read(field);
+    const field = colorKindField(button.dataset.kind);
+    let value = field === "textColor"
+      ? (current.length ? letterColor(current[0]) : (style.textColor || style.strokeColor || "#1e1e1e"))
+      : read(field);
     if ((field === "textFill" || field === "borderColor" || field === "strokeColor") && !value) value = "transparent";
     if (field === "strokeColor" && value === "none") value = "transparent";
     button.setAttribute("aria-pressed", String(value === button.dataset.color));
   }
   for (const button of propertiesHost.querySelectorAll(".choice[data-group]")) {
-    const value = read(button.dataset.group);
+    let value = read(button.dataset.group);
+    if (button.dataset.group === "align") value = current.length ? letterAlign(current[0]) : (value || "left");
+    if (button.dataset.group === "verticalAlign") {
+      value = current.length ? letterVerticalAlign(current[0]) : (value || "middle");
+    }
     button.setAttribute("aria-pressed", String(String(value) === button.dataset.value));
   }
   const opacity = propertiesHost.querySelector("#opacity");
   const opacityValue = read("opacity");
   if (opacity && opacityValue != null && document.activeElement !== opacity) opacity.value = String(opacityValue);
-  for (const input of propertiesHost.querySelectorAll(".color-picker")) {
-    const field = input.dataset.kind === "stroke"
-      ? "strokeColor"
-      : input.dataset.kind === "ground"
-        ? "textFill"
-        : input.dataset.kind === "border"
-          ? "borderColor"
-          : "backgroundColor";
-    const value = read(field);
-    if (value && value !== "transparent" && document.activeElement !== input) input.value = value;
+  for (const chip of propertiesHost.querySelectorAll(".color-chip")) {
+    const input = chip.querySelector(".color-picker-native");
+    const face = chip.querySelector(".color-chip-face");
+    if (!input) continue;
+    const field = colorKindField(input.dataset.kind);
+    const value = field === "textColor"
+      ? (current.length ? letterColor(current[0]) : (style.textColor || style.strokeColor || "#1e1e1e"))
+      : read(field);
+    if (value && value !== "transparent" && document.activeElement !== input) {
+      input.value = value;
+      if (face) face.style.setProperty("--chip", value);
+    }
   }
 }
 
@@ -747,12 +909,44 @@ function duplicateSelection() {
   requestRender();
 }
 
+const LABEL_TYPES = ["rectangle", "diamond", "triangle", "ellipse", "sticky"];
+
 function hasStroke(element) {
   return Boolean(element.strokeColor) && element.strokeColor !== "transparent" && element.strokeColor !== "none";
 }
 
 function isFilled(element) {
   return Boolean(element.backgroundColor) && element.backgroundColor !== "transparent";
+}
+
+function isLabelShape(element) {
+  return Boolean(element) && LABEL_TYPES.includes(element.type);
+}
+
+function letterColor(element) {
+  if (element && element.textColor && element.textColor !== "transparent") return element.textColor;
+  if (element && element.type === "text" && hasStroke(element)) return element.strokeColor;
+  if (element && isLabelShape(element) && hasStroke(element) && !element.textColor) return element.strokeColor;
+  return "#1e1e1e";
+}
+
+function letterAlign(element) {
+  if (element && element.align) return element.align;
+  if (element && element.type === "text") return "left";
+  return "center";
+}
+
+function letterVerticalAlign(element) {
+  const value = element && element.verticalAlign;
+  if (value === "top" || value === "middle" || value === "bottom") return value;
+  if (element && (element.type === "text" || element.type === "list")) return "top";
+  return "middle";
+}
+
+function textBlockStartY(box, contentH, padding, vAlign) {
+  if (vAlign === "top") return box.y + padding;
+  if (vAlign === "bottom") return box.y + Math.max(padding, box.height - padding - contentH);
+  return box.y + Math.max(padding, (box.height - contentH) / 2);
 }
 
 function roughOptions(element) {
@@ -803,12 +997,15 @@ function shapeDrawable(generator, element) {
   if (element.type === "text" || element.type === "image") return null;
   const stroked = hasStroke(element);
   const filled = isFilled(element);
-  const closed = element.type === "rectangle" || element.type === "sticky" || element.type === "ellipse" || element.type === "diamond";
+  const closed = element.type === "rectangle" || element.type === "sticky" || element.type === "ellipse" || element.type === "diamond" || element.type === "triangle";
   if (!stroked && !filled) return null;
   if (!stroked && !closed) return null;
   const options = roughOptions(element);
   const box = normalizeBox(element.x, element.y, element.width, element.height);
   if (closed && (box.width < 1 || box.height < 1)) return null;
+  if (element.type === "triangle") {
+    return generator.polygon(trianglePoly(box).map((point) => [point.x, point.y]), options);
+  }
   if (element.type === "rectangle" || element.type === "sticky" || element.type === "diamond") {
     const points = element.type === "diamond"
       ? diamondPoly(box)
@@ -910,24 +1107,26 @@ function paintTextFrame(context, element) {
 function drawLabel(context, element) {
   paintTextFrame(context, element);
   if (!element.text || (editing && editing.id === element.id)) return;
-  const letter = hasStroke(element) ? element.strokeColor : "#1e1e1e";
   if (element.type !== "text" && !element.text) return;
   const box = boxOf(element);
   const fontSize = element.fontSize || 24;
+  const align = letterAlign(element);
   context.save();
-  context.fillStyle = letter;
+  context.fillStyle = letterColor(element);
   context.font = `${fontSize}px ${FONT}`;
   const padding = element.type === "text" ? 4 : 14;
   const lines = wrapLines(context, element.text, Math.max(20, box.width - padding * 2));
   const lineHeight = fontSize * 1.25;
   context.textBaseline = "top";
+  context.textAlign = align;
   if (element.type === "text") {
-    context.textAlign = "left";
-    lines.forEach((line, index) => context.fillText(line, box.x + 2, box.y + index * lineHeight));
+    const x = align === "center" ? box.x + box.width / 2 : align === "right" ? box.x + box.width - 2 : box.x + 2;
+    const start = textBlockStartY(box, lines.length * lineHeight, padding, letterVerticalAlign(element));
+    lines.forEach((line, index) => context.fillText(line, x, start + index * lineHeight));
   } else {
-    context.textAlign = "center";
-    const start = box.y + Math.max(padding, (box.height - lines.length * lineHeight) / 2);
-    lines.forEach((line, index) => context.fillText(line, box.x + box.width / 2, start + index * lineHeight));
+    const start = textBlockStartY(box, lines.length * lineHeight, padding, letterVerticalAlign(element));
+    const x = align === "left" ? box.x + padding : align === "right" ? box.x + box.width - padding : box.x + box.width / 2;
+    lines.forEach((line, index) => context.fillText(line, x, start + index * lineHeight));
   }
   context.restore();
 }
@@ -935,6 +1134,7 @@ function drawLabel(context, element) {
 function drawElement(context, roughCanvas, element) {
   context.save();
   context.globalAlpha = clamp(element.opacity ?? 100, 0, 100) / 100;
+  applyElementTransform(context, element);
   if (element.type === "image") {
     paintImage(context, element, requestRender);
     context.restore();
@@ -1059,16 +1259,41 @@ function drawChrome() {
   }
   for (const element of elements) {
     if (!selected.has(element.id)) continue;
-    const box = boxOf(element);
-    const origin = worldToScreen(box.x, box.y);
+    const corners = rotatedCorners(element).map((corner) => worldToScreen(corner.x, corner.y));
     ctx.setLineDash([6, 4]);
-    ctx.strokeRect(origin.x - 4, origin.y - 4, box.width * zoom + 8, box.height * zoom + 8);
+    ctx.beginPath();
+    corners.forEach((point, index) => {
+      if (index === 0) ctx.moveTo(point.x, point.y);
+      else ctx.lineTo(point.x, point.y);
+    });
+    ctx.closePath();
+    ctx.stroke();
     ctx.setLineDash([]);
     if (selected.size === 1) {
-      for (const handle of handlesFor(element)) {
+      const handles = handlesFor(element);
+      const rotate = handles.find((handle) => handle.id === "rotate");
+      if (rotate) {
+        const tip = worldToScreen(rotate.x, rotate.y);
+        const mid = {
+          x: (corners[0].x + corners[1].x) / 2,
+          y: (corners[0].y + corners[1].y) / 2,
+        };
+        ctx.beginPath();
+        ctx.moveTo(mid.x, mid.y);
+        ctx.lineTo(tip.x, tip.y);
+        ctx.stroke();
+      }
+      for (const handle of handles) {
         const point = worldToScreen(handle.x, handle.y);
-        ctx.fillRect(point.x - 4, point.y - 4, 8, 8);
-        ctx.strokeRect(point.x - 4, point.y - 4, 8, 8);
+        if (handle.id === "rotate") {
+          ctx.beginPath();
+          ctx.arc(point.x, point.y, 5, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+        } else {
+          ctx.fillRect(point.x - 4, point.y - 4, 8, 8);
+          ctx.strokeRect(point.x - 4, point.y - 4, 8, 8);
+        }
       }
     }
   }
@@ -1087,13 +1312,35 @@ function positionEditor() {
   if (!element) return;
   const box = boxOf(element);
   const origin = worldToScreen(box.x, box.y);
+  const width = Math.max(80, box.width * zoom);
+  const boxHeight = Math.max((element.fontSize || 24) * zoom * 1.4, box.height * zoom);
+  const fontSize = (element.fontSize || 24) * zoom;
+  const lineHeight = fontSize * 1.25;
   editor.style.left = `${origin.x}px`;
-  editor.style.top = `${origin.y}px`;
-  editor.style.width = `${Math.max(80, box.width * zoom)}px`;
-  editor.style.height = `${Math.max(element.fontSize * zoom * 1.4, box.height * zoom)}px`;
-  editor.style.fontSize = `${element.fontSize * zoom}px`;
-  editor.style.color = element.strokeColor;
+  editor.style.width = `${width}px`;
+  editor.style.fontSize = `${fontSize}px`;
+  editor.style.color = letterColor(element);
+  editor.style.textAlign = letterAlign(element);
   editor.style.fontFamily = FONT;
+  editor.style.lineHeight = "1.25";
+  editor.style.boxSizing = "border-box";
+  if (isLabelShape(element)) {
+    const padX = 14 * zoom;
+    const padY = 14 * zoom;
+    ctx.font = `${fontSize}px ${FONT}`;
+    const lines = wrapLines(ctx, editor.value || "", Math.max(20, width - padX * 2));
+    const contentH = Math.max(lineHeight, lines.length * lineHeight);
+    const offset = textBlockStartY({ x: 0, y: 0, width, height: boxHeight }, contentH, padY, letterVerticalAlign(element));
+    editor.style.top = `${origin.y + offset}px`;
+    editor.style.height = `${contentH}px`;
+    editor.style.padding = `0 ${padX}px`;
+    editor.style.borderBottom = "0";
+  } else {
+    editor.style.top = `${origin.y}px`;
+    editor.style.height = `${boxHeight}px`;
+    editor.style.padding = "4px 6px";
+    editor.style.borderBottom = "";
+  }
 }
 
 function openEditor(element) {
@@ -1154,7 +1401,7 @@ function updateDraft(element, world, shiftKey) {
 }
 
 function finalizeDraft(element) {
-  if (element.type === "rectangle" || element.type === "diamond" || element.type === "ellipse" || element.type === "sticky") {
+  if (element.type === "rectangle" || element.type === "diamond" || element.type === "triangle" || element.type === "ellipse" || element.type === "sticky") {
     const box = normalizeBox(element.x, element.y, element.width, element.height);
     const tiny = box.width < 4 && box.height < 4;
     if (element.type === "sticky" && tiny) {
@@ -1213,10 +1460,15 @@ function onPointerDown(event) {
     mode = "text";
     return;
   }
-  if (tool === "selection") {
+  if (tool === "selection" || tool === "rotate") {
     const only = selected.size === 1 ? elements.find((element) => selected.has(element.id)) : null;
     const handle = only && hitHandle(only, world.x, world.y, 8 / zoom);
-    if (handle) {
+    if (handle === "rotate" || (tool === "rotate" && handle)) {
+      beginChange();
+      beginRotateGesture([only], world);
+      return;
+    }
+    if (handle && tool === "selection") {
       mode = "resize";
       resizeHandle = handle;
       resizeStart = clone(only);
@@ -1224,6 +1476,24 @@ function onPointerDown(event) {
       return;
     }
     const hit = hitTest(elements, world.x, world.y, 8 / zoom);
+    if (tool === "rotate") {
+      if (hit) {
+        if (!selected.has(hit.id)) selected = new Set([hit.id]);
+        beginChange();
+        beginRotateGesture(selectedElements(), world);
+        syncProperties();
+        requestRender();
+        return;
+      }
+      mode = "marquee";
+      marqueeBase = event.shiftKey ? new Set(selected) : new Set();
+      if (!event.shiftKey) selected = new Set();
+      marquee = { x: world.x, y: world.y, width: 0, height: 0 };
+      beginChange();
+      syncProperties();
+      requestRender();
+      return;
+    }
     if (hit && (event.ctrlKey || event.metaKey)) {
       if (!selected.has(hit.id)) selected = new Set([hit.id]);
       beginChange();
@@ -1324,24 +1594,34 @@ function onPointerMove(event) {
   if (mode === "resize" && resizeStart) {
     elements = elements.map((element) => {
       if (element.id !== resizeStart.id) return element;
+      const local = worldToLocal(resizeStart, world.x, world.y);
       if (resizeHandle === "start" || resizeHandle === "end") {
         const points = absPoints(resizeStart);
         const index = resizeHandle === "start" ? 0 : points.length - 1;
-        let next = world;
+        let next = local;
         const anchor = points[index === 0 ? points.length - 1 : 0];
-        if (event.shiftKey) next = snapAngle(anchor.x, anchor.y, world.x, world.y);
+        if (event.shiftKey) next = snapAngle(anchor.x, anchor.y, local.x, local.y);
         points[index] = next;
         return withAbsPoints(resizeStart, points);
       }
-      const box = resizeBox(boxOf(resizeStart), resizeHandle, world, event.shiftKey || resizeStart.type === "image");
+      const box = resizeBox(boxOf(resizeStart), resizeHandle, local, event.shiftKey || resizeStart.type === "image");
       return { ...resizeStart, ...box };
     });
     requestRender();
     return;
   }
+  if (mode === "rotate" && rotateOrigins.length && rotatePivot) {
+    const angle = Math.atan2(world.y - rotatePivot.y, world.x - rotatePivot.x);
+    const delta = angle - rotatePointerAngle;
+    const rotated = rotateElements(rotateOrigins, rotateOrigins.map((element) => element.id), delta, event.shiftKey);
+    const map = new Map(rotated.map((element) => [element.id, element]));
+    elements = elements.map((element) => map.get(element.id) || element);
+    requestRender();
+    return;
+  }
   if (mode === "marquee") {
     marquee = normalizeBox(pointerStart.world.x, pointerStart.world.y, world.x - pointerStart.world.x, world.y - pointerStart.world.y);
-    const hits = elements.filter((element) => intersects(boxOf(element), marquee)).map((element) => element.id);
+    const hits = elements.filter((element) => intersects(worldBounds(element), marquee)).map((element) => element.id);
     selected = new Set([...marqueeBase, ...hits]);
     requestRender();
   }
@@ -1353,7 +1633,7 @@ function onPointerUp(event) {
     const screen = pointerPosition(event);
     const world = screenToWorld(screen.x, screen.y);
     const hit = hitTest(elements, world.x, world.y, 8 / zoom);
-    if (hit && ["text", "sticky", "rectangle", "diamond", "ellipse"].includes(hit.type)) openEditor(hit);
+    if (hit && ["text", "sticky", "rectangle", "diamond", "triangle", "ellipse"].includes(hit.type)) openEditor(hit);
     else {
       const spot = maybeSnap(world);
       const element = createElement("text", spot.x, spot.y, style);
@@ -1375,6 +1655,8 @@ function onPointerUp(event) {
   marquee = null;
   draft = null;
   resizeStart = null;
+  rotateOrigins = [];
+  rotatePivot = null;
   moveIsDuplicate = false;
   hideDupMark();
   if (!keepHistoryOpen) endChange();
@@ -1391,6 +1673,7 @@ editor.addEventListener("input", () => {
   ctx.font = `${element.fontSize}px ${FONT}`;
   const lines = wrapLines(ctx, element.text, Math.max(20, element.width - 8));
   if (element.type === "text") element.height = Math.max(element.fontSize * 1.25, lines.length * element.fontSize * 1.25);
+  positionEditor();
   requestRender();
 });
 
@@ -1424,7 +1707,7 @@ canvas.addEventListener("dblclick", (event) => {
   const screen = pointerPosition(event);
   const world = screenToWorld(screen.x, screen.y);
   const hit = hitTest(elements, world.x, world.y, 8 / zoom);
-  if (hit && ["text", "sticky", "rectangle", "diamond", "ellipse"].includes(hit.type)) openEditor(hit);
+  if (hit && ["text", "sticky", "rectangle", "diamond", "triangle", "ellipse"].includes(hit.type)) openEditor(hit);
 });
 
 canvas.addEventListener("wheel", (event) => {

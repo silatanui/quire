@@ -147,7 +147,7 @@ export function sceneBounds(elements) {
   let maxX = -Infinity;
   let maxY = -Infinity;
   for (const element of elements) {
-    const box = boxOf(element);
+    const box = worldBounds(element);
     minX = Math.min(minX, box.x);
     minY = Math.min(minY, box.y);
     maxX = Math.max(maxX, box.x + box.width);
@@ -164,6 +164,14 @@ export function diamondPoly(box) {
     { x: box.x + box.width, y: cy },
     { x: cx, y: box.y + box.height },
     { x: box.x, y: cy },
+  ];
+}
+
+export function trianglePoly(box) {
+  return [
+    { x: box.x + box.width / 2, y: box.y },
+    { x: box.x + box.width, y: box.y + box.height },
+    { x: box.x, y: box.y + box.height },
   ];
 }
 
@@ -188,14 +196,93 @@ export function pointInPoly(x, y, poly) {
   return inside;
 }
 
+export function elementAngle(element) {
+  return Number(element && element.angle) || 0;
+}
+
+export function elementCenter(element) {
+  const box = boxOf(element);
+  return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+}
+
+export function localToWorld(element, x, y) {
+  const center = elementCenter(element);
+  let lx = x - center.x;
+  let ly = y - center.y;
+  if (element && element.flipX) lx = -lx;
+  if (element && element.flipY) ly = -ly;
+  const angle = elementAngle(element);
+  const cos = Math.cos(angle);
+  const sin = Math.sin(angle);
+  return {
+    x: center.x + lx * cos - ly * sin,
+    y: center.y + lx * sin + ly * cos,
+  };
+}
+
+export function worldToLocal(element, x, y) {
+  const center = elementCenter(element);
+  let lx = x - center.x;
+  let ly = y - center.y;
+  const angle = elementAngle(element);
+  const cos = Math.cos(-angle);
+  const sin = Math.sin(-angle);
+  let rx = lx * cos - ly * sin;
+  let ry = lx * sin + ly * cos;
+  if (element && element.flipX) rx = -rx;
+  if (element && element.flipY) ry = -ry;
+  return { x: center.x + rx, y: center.y + ry };
+}
+
+export function applyElementTransform(context, element) {
+  const center = elementCenter(element);
+  context.translate(center.x, center.y);
+  context.rotate(elementAngle(element));
+  context.scale(element && element.flipX ? -1 : 1, element && element.flipY ? -1 : 1);
+  context.translate(-center.x, -center.y);
+}
+
+export function hasTransform(element) {
+  return Boolean(elementAngle(element) || (element && element.flipX) || (element && element.flipY));
+}
+
+export function rotatedCorners(element) {
+  const box = boxOf(element);
+  return [
+    localToWorld(element, box.x, box.y),
+    localToWorld(element, box.x + box.width, box.y),
+    localToWorld(element, box.x + box.width, box.y + box.height),
+    localToWorld(element, box.x, box.y + box.height),
+  ];
+}
+
+export function worldBounds(element) {
+  if (!hasTransform(element)) return boxOf(element);
+  const corners = rotatedCorners(element);
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const corner of corners) {
+    minX = Math.min(minX, corner.x);
+    minY = Math.min(minY, corner.y);
+    maxX = Math.max(maxX, corner.x);
+    maxY = Math.max(maxY, corner.y);
+  }
+  return { x: minX, y: minY, width: Math.max(0, maxX - minX), height: Math.max(0, maxY - minY) };
+}
+
 export function hitsElement(element, x, y, pad) {
+  const local = worldToLocal(element, x, y);
+  const px = local.x;
+  const py = local.y;
   const strokePad = pad + (element.strokeWidth || 1);
   if (element.type === "line" || element.type === "arrow" || element.type === "freedraw") {
     const points = absPoints(element);
     for (let i = 1; i < points.length; i++) {
-      if (distToSegment(x, y, points[i - 1], points[i]) <= strokePad) return true;
+      if (distToSegment(px, py, points[i - 1], points[i]) <= strokePad) return true;
     }
-    return points.length === 1 && Math.hypot(x - points[0].x, y - points[0].y) <= strokePad;
+    return points.length === 1 && Math.hypot(px - points[0].x, py - points[0].y) <= strokePad;
   }
 
   const box = boxOf(element);
@@ -203,20 +290,24 @@ export function hitsElement(element, x, y, pad) {
     const rx = box.width / 2;
     const ry = box.height / 2;
     if (rx < 0.5 || ry < 0.5) return false;
-    const nx = (x - (box.x + rx)) / (rx + pad);
-    const ny = (y - (box.y + ry)) / (ry + pad);
+    const nx = (px - (box.x + rx)) / (rx + pad);
+    const ny = (py - (box.y + ry)) / (ry + pad);
     return nx * nx + ny * ny <= 1;
   }
 
   if (element.type === "diamond") {
-    return pointInPoly(x, y, diamondPoly(box));
+    return pointInPoly(px, py, diamondPoly(box));
+  }
+
+  if (element.type === "triangle") {
+    return pointInPoly(px, py, trianglePoly(box));
   }
 
   return (
-    x >= box.x - pad &&
-    y >= box.y - pad &&
-    x <= box.x + box.width + pad &&
-    y <= box.y + box.height + pad
+    px >= box.x - pad &&
+    py >= box.y - pad &&
+    px <= box.x + box.width + pad &&
+    py <= box.y + box.height + pad
   );
 }
 
@@ -231,14 +322,14 @@ export function handlesFor(element) {
   if (element.type === "line" || element.type === "arrow" || element.type === "freedraw") {
     const points = absPoints(element);
     return [
-      { id: "start", x: points[0].x, y: points[0].y },
-      { id: "end", x: points[points.length - 1].x, y: points[points.length - 1].y },
+      { id: "start", ...localToWorld(element, points[0].x, points[0].y) },
+      { id: "end", ...localToWorld(element, points[points.length - 1].x, points[points.length - 1].y) },
     ];
   }
   const box = boxOf(element);
   const cx = box.x + box.width / 2;
   const cy = box.y + box.height / 2;
-  return [
+  const locals = [
     { id: "nw", x: box.x, y: box.y },
     { id: "n", x: cx, y: box.y },
     { id: "ne", x: box.x + box.width, y: box.y },
@@ -248,13 +339,41 @@ export function handlesFor(element) {
     { id: "sw", x: box.x, y: box.y + box.height },
     { id: "w", x: box.x, y: cy },
   ];
+  const handles = locals.map((handle) => ({ id: handle.id, ...localToWorld(element, handle.x, handle.y) }));
+  const lift = Math.max(28, Math.min(box.width, box.height) * 0.18 + 18);
+  handles.push({ id: "rotate", ...localToWorld(element, cx, box.y - lift) });
+  return handles;
 }
 
 export function hitHandle(element, x, y, pad) {
   for (const handle of handlesFor(element)) {
-    if (Math.abs(x - handle.x) <= pad && Math.abs(y - handle.y) <= pad) return handle.id;
+    const reach = handle.id === "rotate" ? pad * 1.35 : pad;
+    if (Math.abs(x - handle.x) <= reach && Math.abs(y - handle.y) <= reach) return handle.id;
   }
   return null;
+}
+
+export function rotateElements(elements, ids, delta, snap = false) {
+  const selected = new Set(ids);
+  return elements.map((element) => {
+    if (!selected.has(element.id)) return element;
+    let angle = elementAngle(element) + delta;
+    if (snap) {
+      const step = Math.PI / 12;
+      angle = Math.round(angle / step) * step;
+    }
+    return { ...element, angle };
+  });
+}
+
+export function flipElements(elements, ids, axis) {
+  const selected = new Set(ids);
+  return elements.map((element) => {
+    if (!selected.has(element.id)) return element;
+    if (axis === "h") return { ...element, flipX: !element.flipX };
+    if (axis === "v") return { ...element, flipY: !element.flipY };
+    return element;
+  });
 }
 
 export function resizeBox(start, handle, pointer, keepRatio) {

@@ -1,23 +1,31 @@
 import {
   DEFAULT_STYLE,
   absPoints,
+  applyElementTransform,
   boxOf,
   clone,
   constrainBox,
   createElement,
   diamondPoly,
+  trianglePoly,
   duplicateElements,
+  elementCenter,
+  flipElements,
   handlesFor,
   hitHandle,
   hitTest,
   intersects,
   normalizeBox,
   resizeBox,
+  rotateElements,
+  rotatedCorners,
   snapAngle,
   reorder,
   translate,
   uid,
   withAbsPoints,
+  worldBounds,
+  worldToLocal,
   clamp,
 } from "./model.js";
 import { pdfFromJpegs, pptxFromJpegs } from "./folio-export.js";
@@ -43,6 +51,12 @@ import {
   paintImage,
   pickImageFiles,
 } from "./media.js";
+import {
+  colorKindField,
+  loadRecentColors,
+  patchForColorKind,
+  rememberColor,
+} from "./colors.js";
 
 const STORAGE_KEY = "quire-folio-v1";
 const FONT = '"Varela Round", "Segoe UI", sans-serif';
@@ -76,8 +90,10 @@ const presentNote = document.querySelector("#present-note");
 const TOOLS = [
   { id: "hand", label: "Hand", keys: ["h"] },
   { id: "selection", label: "Selection", keys: ["v", "1"] },
+  { id: "rotate", label: "Rotate", keys: ["u"] },
   { id: "rectangle", label: "Rectangle", keys: ["r", "2"] },
   { id: "diamond", label: "Diamond", keys: ["d", "3"] },
+  { id: "triangle", label: "Triangle", keys: ["g"] },
   { id: "ellipse", label: "Ellipse", keys: ["o", "4"] },
   { id: "arrow", label: "Arrow", keys: ["a", "5"] },
   { id: "line", label: "Line", keys: ["l", "6"] },
@@ -91,8 +107,10 @@ const TOOLS = [
 const ICONS = {
   hand: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 11V6.5a1.5 1.5 0 0 1 3 0V11"/><path d="M11 10.5V5.5a1.5 1.5 0 0 1 3 0V11"/><path d="M14 10.8V7.5a1.5 1.5 0 0 1 3 0V13c0 3.2-2 6-5.2 6H11c-2.4 0-4-1.2-4.8-3L5 13.2a1.6 1.6 0 0 1 2.6-1.7L8 13"/></svg>',
   selection: '<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M5 3.8 5.4 18.2 9.4 14.4 13.2 21.2 15.6 20 11.8 13.4 17.6 13.1Z"/></svg>',
+  rotate: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4.5 12a7.5 7.5 0 0 1 12.8-5.3"/><path d="M17.5 4.5v4h-4"/><path d="M19.5 12a7.5 7.5 0 0 1-12.8 5.3"/><path d="M6.5 19.5v-4h4"/></svg>',
   rectangle: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="6" width="16" height="12" rx="1.5"/></svg>',
   diamond: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3.5 20.5 12 12 20.5 3.5 12Z"/></svg>',
+  triangle: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 4 20 19H4Z"/></svg>',
   ellipse: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><ellipse cx="12" cy="12" rx="8" ry="6"/></svg>',
   arrow: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 17 17.5 6.5"/><path d="M11 6h7v7"/></svg>',
   line: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 18 18 6"/></svg>',
@@ -140,6 +158,9 @@ let pointerStart = null;
 let moveOrigins = [];
 let resizeHandle = null;
 let resizeStart = null;
+let rotateOrigins = [];
+let rotatePointerAngle = 0;
+let rotatePivot = null;
 let marquee = null;
 let marqueeBase = new Set();
 let alignGuides = [];
@@ -329,6 +350,35 @@ function hasFill(element) {
   return Boolean(element.backgroundColor) && element.backgroundColor !== "transparent";
 }
 
+function isLabelShape(element) {
+  return Boolean(element) && LABEL_TYPES.includes(element.type);
+}
+
+function letterColor(element) {
+  if (element && element.textColor && element.textColor !== "transparent") return element.textColor;
+  if (element && (element.type === "text" || element.type === "list") && hasStroke(element)) return element.strokeColor;
+  return "#1e1e1e";
+}
+
+function letterVerticalAlign(element) {
+  const value = element && element.verticalAlign;
+  if (value === "top" || value === "middle" || value === "bottom") return value;
+  if (element && (element.type === "text" || element.type === "list")) return "top";
+  return "middle";
+}
+
+function textBlockStartY(box, contentH, padding, vAlign) {
+  if (vAlign === "top") return box.y + padding;
+  if (vAlign === "bottom") return box.y + Math.max(padding, box.height - padding - contentH);
+  return box.y + Math.max(padding, (box.height - contentH) / 2);
+}
+
+function letterAlign(element) {
+  if (element && element.align) return element.align;
+  if (element && (element.type === "text" || element.type === "list")) return "left";
+  return "center";
+}
+
 function roughOptions(element) {
   const stroked = hasStroke(element);
   const options = {
@@ -417,12 +467,15 @@ function shapeDrawable(generator, element) {
   if (element.type === "text" || element.type === "list" || element.type === "group" || element.type === "image") return null;
   const stroked = hasStroke(element);
   const filled = hasFill(element);
-  const closed = element.type === "rectangle" || element.type === "sticky" || element.type === "ellipse" || element.type === "diamond";
+  const closed = element.type === "rectangle" || element.type === "sticky" || element.type === "ellipse" || element.type === "diamond" || element.type === "triangle";
   if (!stroked && !filled) return null;
   if (!stroked && !closed) return null;
   const options = roughOptions(element);
   const box = normalizeBox(element.x, element.y, element.width, element.height);
   if (closed && (box.width < 1 || box.height < 1)) return null;
+  if (element.type === "triangle") {
+    return generator.polygon(trianglePoly(box).map((point) => [point.x, point.y]), options);
+  }
   if (element.type === "rectangle" || element.type === "sticky" || element.type === "diamond") {
     const points = element.type === "diamond"
       ? diamondPoly(box)
@@ -485,6 +538,7 @@ function arrowHeadDrawable(generator, element) {
 function drawElement(context, roughCanvas, element) {
   if (element.type === "group") {
     context.save();
+    applyElementTransform(context, element);
     context.translate(element.x, element.y);
     for (const child of element.children || []) drawElement(context, roughCanvas, child);
     context.restore();
@@ -492,6 +546,7 @@ function drawElement(context, roughCanvas, element) {
   }
   context.save();
   context.globalAlpha = clamp(element.opacity ?? 100, 0, 100) / 100;
+  applyElementTransform(context, element);
   if (element.type === "image") {
     paintImage(context, element, paintMain);
     context.restore();
@@ -506,15 +561,17 @@ function drawElement(context, roughCanvas, element) {
   else if (element.text && element.id !== editingId) {
     const fontSize = element.fontSize || 28;
     const box = boxOf(element);
-    context.fillStyle = hasStroke(element) ? element.strokeColor : "#1e1e1e";
+    const align = letterAlign(element);
+    context.fillStyle = letterColor(element);
     context.font = fontCss(element, fontSize);
     context.textBaseline = "top";
-    context.textAlign = "center";
+    context.textAlign = align;
     const pad = 14;
     const lines = wrapLines(context, element.text, Math.max(40, box.width - pad * 2));
     const lineHeight = fontSize * 1.25;
-    const start = box.y + Math.max(pad, (box.height - lines.length * lineHeight) / 2);
-    lines.forEach((line, index) => context.fillText(line, box.x + box.width / 2, start + index * lineHeight));
+    const start = textBlockStartY(box, lines.length * lineHeight, pad, letterVerticalAlign(element));
+    const x = align === "left" ? box.x + pad : align === "right" ? box.x + box.width - pad : box.x + box.width / 2;
+    lines.forEach((line, index) => context.fillText(line, x, start + index * lineHeight));
   }
   context.restore();
 }
@@ -544,16 +601,17 @@ function paintTextBlock(context, element) {
   const box = boxOf(element);
   paintTextFrame(context, element);
   if (!element.text || element.id === editingId) return;
-  context.fillStyle = element.strokeColor || "#1e1e1e";
+  context.fillStyle = letterColor(element);
   context.font = fontCss(element, fontSize);
   context.textBaseline = "top";
-  const align = element.align || "left";
+  const align = letterAlign(element);
   context.textAlign = align;
   const pad = 2;
   const lines = wrapLines(context, element.text, Math.max(40, box.width - pad * 2));
   const lineHeight = fontSize * 1.25;
+  const start = textBlockStartY(box, lines.length * lineHeight, pad, letterVerticalAlign(element));
   const x = align === "center" ? box.x + box.width / 2 : align === "right" ? box.x + box.width - pad : box.x + pad;
-  lines.forEach((line, index) => context.fillText(line, x, box.y + index * lineHeight));
+  lines.forEach((line, index) => context.fillText(line, x, start + index * lineHeight));
 }
 
 const measureCanvas = document.createElement("canvas");
@@ -589,12 +647,12 @@ function paintList(context, element) {
   paintTextFrame(context, element);
   if (element.id === editingId) return;
   const items = element.items || [];
-  context.fillStyle = element.strokeColor || "#1e1e1e";
+  context.fillStyle = letterColor(element);
   context.font = fontCss(element, fontSize);
   context.textBaseline = "top";
   const gutter = element.listStyle === "plain" ? 0 : fontSize * 1.6;
   const lineHeight = fontSize * 1.45;
-  const align = element.align || "left";
+  const align = letterAlign(element);
   let y = box.y;
   items.forEach((item, index) => {
     const marker = markerFor(element.listStyle, index);
@@ -636,7 +694,7 @@ function resizeLettering(start, handle, world) {
   return { ...next, x, y };
 }
 
-const LABEL_TYPES = ["rectangle", "diamond", "ellipse", "sticky"];
+const LABEL_TYPES = ["rectangle", "diamond", "triangle", "ellipse", "sticky"];
 
 function scaleMember(element, sx, sy) {
   const next = {
@@ -664,18 +722,47 @@ function resizeGroup(start, handle, world, keepRatio) {
 }
 
 function resizedElement(start, handle, world, shiftKey) {
+  const local = worldToLocal(start, world.x, world.y);
   if (handle === "start" || handle === "end") {
     const points = absPoints(start);
     const index = handle === "start" ? 0 : points.length - 1;
-    let next = world;
+    let next = local;
     const anchor = points[index === 0 ? points.length - 1 : 0];
-    if (shiftKey) next = snapAngle(anchor.x, anchor.y, world.x, world.y);
+    if (shiftKey) next = snapAngle(anchor.x, anchor.y, local.x, local.y);
     points[index] = next;
     return withAbsPoints(start, points);
   }
-  if (start.type === "text" || start.type === "list") return resizeLettering(start, handle, world);
-  if (start.type === "group") return resizeGroup(start, handle, world, shiftKey);
-  return { ...start, ...resizeBox(boxOf(start), handle, world, shiftKey || start.type === "image") };
+  if (start.type === "text" || start.type === "list") return resizeLettering(start, handle, local);
+  if (start.type === "group") return resizeGroup(start, handle, local, shiftKey);
+  return { ...start, ...resizeBox(boxOf(start), handle, local, shiftKey || start.type === "image") };
+}
+
+function beginRotateGesture(list, world) {
+  rotateOrigins = list.map((element) => clone(element));
+  rotatePivot = rotateOrigins.length === 1
+    ? elementCenter(rotateOrigins[0])
+    : {
+        x: rotateOrigins.reduce((sum, element) => sum + elementCenter(element).x, 0) / rotateOrigins.length,
+        y: rotateOrigins.reduce((sum, element) => sum + elementCenter(element).y, 0) / rotateOrigins.length,
+      };
+  rotatePointerAngle = Math.atan2(world.y - rotatePivot.y, world.x - rotatePivot.x);
+  mode = "rotate";
+}
+
+function flipSelection(axis) {
+  if (!selected.size) return;
+  beginChange();
+  sheet().elements = flipElements(elements(), [...selected], axis);
+  endChange();
+  syncProperties();
+  paintMain();
+}
+
+function flipIcon(axis) {
+  if (axis === "h") {
+    return '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3v18"/><path d="M7 8 3.5 12 7 16"/><path d="M17 8l3.5 4L17 16"/><path d="M3.5 12H7m10 0h3.5"/><path d="M14 6h4v12h-4"/><path d="M10 6H6v12h4" opacity=".45"/></svg>';
+  }
+  return '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 12h18"/><path d="M8 7 12 3.5 16 7"/><path d="M8 17l4 3.5L16 17"/><path d="M12 3.5V7m0 10v3.5"/><path d="M6 14v4h12v-4"/><path d="M6 10V6h12v4" opacity=".45"/></svg>';
 }
 
 function viewScale() {
@@ -793,9 +880,15 @@ function drawGuides(context) {
   }
   for (const element of sheet().elements || []) {
     if (!selected.has(element.id)) continue;
-    const box = boxOf(element);
+    const corners = rotatedCorners(element);
     context.setLineDash([6 / viewScale(), 4 / viewScale()]);
-    context.strokeRect(box.x - pad, box.y - pad, box.width + pad * 2, box.height + pad * 2);
+    context.beginPath();
+    corners.forEach((corner, index) => {
+      if (index === 0) context.moveTo(corner.x, corner.y);
+      else context.lineTo(corner.x, corner.y);
+    });
+    context.closePath();
+    context.stroke();
     context.setLineDash([]);
     if (focusMember && element.id === focusMember.groupId) {
       const child = (element.children || []).find((item) => item.id === focusMember.childId);
@@ -805,9 +898,28 @@ function drawGuides(context) {
       }
     }
     if (selected.size !== 1 || focusMember) continue;
-    for (const handle of handlesFor(element)) {
-      context.fillRect(handle.x - size / 2, handle.y - size / 2, size, size);
-      context.strokeRect(handle.x - size / 2, handle.y - size / 2, size, size);
+    const handles = handlesFor(element);
+    const rotate = handles.find((handle) => handle.id === "rotate");
+    if (rotate) {
+      const mid = {
+        x: (corners[0].x + corners[1].x) / 2,
+        y: (corners[0].y + corners[1].y) / 2,
+      };
+      context.beginPath();
+      context.moveTo(mid.x, mid.y);
+      context.lineTo(rotate.x, rotate.y);
+      context.stroke();
+    }
+    for (const handle of handles) {
+      if (handle.id === "rotate") {
+        context.beginPath();
+        context.arc(handle.x, handle.y, size * 0.55, 0, Math.PI * 2);
+        context.fill();
+        context.stroke();
+      } else {
+        context.fillRect(handle.x - size / 2, handle.y - size / 2, size, size);
+        context.strokeRect(handle.x - size / 2, handle.y - size / 2, size, size);
+      }
     }
   }
   context.restore();
@@ -844,7 +956,7 @@ function updateCursor(world, clientX = 0, clientY = 0) {
     hideDupMark();
     return;
   }
-  if (tool === "selection" && world && (selected.size === 1 || focusMember) && !ctrlHeld) {
+  if ((tool === "selection" || tool === "rotate") && world && (selected.size === 1 || focusMember) && !ctrlHeld) {
     const active = activeHandleTarget();
     const element = active && active.element;
     const handle = element && hitHandle(element, world.x, world.y, handleSize());
@@ -859,12 +971,18 @@ function updateCursor(world, clientX = 0, clientY = 0) {
       w: "ew-resize",
       start: "grab",
       end: "grab",
+      rotate: "grab",
     };
     if (handle && cursors[handle]) {
       canvas.style.cursor = cursors[handle];
       hideDupMark();
       return;
     }
+  }
+  if (tool === "rotate") {
+    canvas.style.cursor = "grab";
+    hideDupMark();
+    return;
   }
   if (tool === "selection" && world) {
     const hit = hitTest(elements(), world.x, world.y, 8);
@@ -1508,15 +1626,35 @@ function positionEditor() {
   const box = boxOf(target.placed);
   const scale = canvas.getBoundingClientRect().width / SHEET.width;
   const gutter = element.type === "list" && element.listStyle !== "plain" ? (element.fontSize || 30) * 1.6 * scale : 0;
+  const width = Math.max(24, box.width * scale - gutter);
+  const boxHeight = Math.max(24, box.height * scale);
+  const fontSize = (element.fontSize || 48) * scale;
+  const baseTop = canvas.offsetTop + box.y * scale;
   editor.hidden = false;
   editor.style.left = `${canvas.offsetLeft + box.x * scale + gutter}px`;
-  editor.style.top = `${canvas.offsetTop + box.y * scale}px`;
-  editor.style.width = `${Math.max(24, box.width * scale - gutter)}px`;
-  editor.style.height = `${Math.max(24, box.height * scale)}px`;
+  editor.style.width = `${width}px`;
   editor.style.fontFamily = fontStack(element);
-  editor.style.fontSize = `${(element.fontSize || 48) * scale}px`;
+  editor.style.fontSize = `${fontSize}px`;
   editor.style.lineHeight = element.type === "list" ? "1.45" : "1.25";
-  editor.style.textAlign = element.align || (element.type === "text" || element.type === "list" ? "left" : "center");
+  editor.style.color = letterColor(element);
+  editor.style.textAlign = letterAlign(element);
+  editor.style.boxSizing = "border-box";
+  if (LABEL_TYPES.includes(element.type)) {
+    const padX = 14 * scale;
+    const padY = 14 * scale;
+    const lineHeight = fontSize * 1.25;
+    ctx.font = fontCss(element, fontSize);
+    const lines = wrapLines(ctx, editor.value || "", Math.max(20, width - padX * 2));
+    const contentH = Math.max(lineHeight, lines.length * lineHeight);
+    const offset = textBlockStartY({ x: 0, y: 0, width, height: boxHeight }, contentH, padY, letterVerticalAlign(element));
+    editor.style.top = `${baseTop + offset}px`;
+    editor.style.height = `${contentH}px`;
+    editor.style.padding = `0 ${padX}px`;
+  } else {
+    editor.style.top = `${baseTop}px`;
+    editor.style.height = `${boxHeight}px`;
+    editor.style.padding = "0";
+  }
 }
 
 function pointerOnSheet(event) {
@@ -1708,13 +1846,23 @@ function patchElement(element, partial) {
     return { ...element, borderColor: partial.borderColor };
   }
   if (partial.align != null) {
-    if (element.type !== "text" && element.type !== "list") return element;
+    if (element.type !== "text" && element.type !== "list" && !isLabelShape(element)) return element;
     return { ...element, align: partial.align };
+  }
+  if (partial.verticalAlign != null) {
+    if (element.type !== "text" && element.type !== "list" && !isLabelShape(element)) return element;
+    return { ...element, verticalAlign: partial.verticalAlign };
+  }
+  if (partial.textColor !== undefined) {
+    if (element.type !== "text" && element.type !== "list" && !isLabelShape(element)) return element;
+    const next = { ...element, textColor: partial.textColor };
+    if (element.type === "text" || element.type === "list") next.strokeColor = partial.textColor;
+    return next;
   }
   if (partial.listStyle && element.type !== "list") return element;
   const next = { ...element, ...partial };
-  if ((partial.fontSize || partial.listStyle || partial.fontFamily) && (element.type === "text" || element.type === "list")) {
-    next.height = blockHeight(next);
+  if ((partial.fontSize || partial.listStyle || partial.fontFamily) && (element.type === "text" || element.type === "list" || isLabelShape(element))) {
+    if (element.type === "text" || element.type === "list") next.height = blockHeight(next);
   }
   return next;
 }
@@ -1780,6 +1928,8 @@ function applyStyle(partial, commitChange) {
   else if (partial.textFill !== undefined) drawStyle = { ...drawStyle, textFill: partial.textFill };
   else if (partial.borderColor !== undefined) drawStyle = { ...drawStyle, borderColor: partial.borderColor };
   else if (partial.align != null) drawStyle = { ...drawStyle, align: partial.align };
+  else if (partial.verticalAlign != null) drawStyle = { ...drawStyle, verticalAlign: partial.verticalAlign };
+  else if (partial.textColor !== undefined) drawStyle = { ...drawStyle, textColor: partial.textColor, strokeColor: partial.textColor };
   else drawStyle = { ...drawStyle, ...partial };
   const member = focusedChild();
   if (member) {
@@ -1811,21 +1961,60 @@ function changeOrder(direction) {
   endChange(true);
 }
 
-function swatch(color, kind) {
+function applyPickedColor(kind, color, commit = true) {
+  applyStyle(patchForColorKind(kind, color), commit);
+  if (!commit || !color || color === "transparent") return;
+  rememberColor(color);
+  refreshRecentSwatches();
+}
+
+function swatch(color, kind, options = {}) {
   const button = document.createElement("button");
   button.type = "button";
-  button.className = `swatch${color === "transparent" ? " none" : ""}`;
+  button.className = `swatch${color === "transparent" ? " none" : ""}${options.recent ? " recent" : ""}`;
   button.style.background = color === "transparent" ? "" : color;
   button.dataset.color = color;
   button.dataset.kind = kind;
-  const emptyLabel = { ground: "No background", border: "No outline", stroke: "No outline" };
-  button.title = color === "transparent" ? (emptyLabel[kind] || "No wash") : color;
+  if (options.recent) button.dataset.recent = "1";
+  const emptyLabel = { ground: "No background", border: "No outline", stroke: "No outline", letter: "Default ink" };
+  button.title = color === "transparent" ? (emptyLabel[kind] || "No wash") : (options.recent ? `Recent ${color}` : color);
   button.setAttribute("aria-label", button.title);
-  button.addEventListener("click", () => {
-    const patch = kind === "stroke" ? { strokeColor: color } : kind === "ground" ? { textFill: color } : kind === "border" ? { borderColor: color } : { backgroundColor: color };
-    applyStyle(patch, true);
-  });
+  button.addEventListener("click", () => applyPickedColor(kind, color, true));
   return button;
+}
+
+function fillRecentHost(host, kind, fixed) {
+  host.replaceChildren();
+  const skip = new Set(fixed.filter((color) => color !== "transparent"));
+  const recent = loadRecentColors().filter((color) => !skip.has(color));
+  if (!recent.length) {
+    host.hidden = true;
+    return;
+  }
+  host.hidden = false;
+  for (const color of recent) host.append(swatch(color, kind, { recent: true }));
+}
+
+function refreshRecentSwatches() {
+  const host = $("#properties");
+  if (!host) return;
+  host.querySelectorAll("[data-recent-host]").forEach((row) => {
+    fillRecentHost(row, row.dataset.kind, (row.dataset.fixed || "").split(",").filter(Boolean));
+  });
+  syncProperties();
+}
+
+function appendColorControls(row, kind, colors) {
+  const fixed = colors.slice();
+  for (const color of fixed) row.append(swatch(color, kind));
+  const recentHost = document.createElement("div");
+  recentHost.className = "recent-swatches";
+  recentHost.dataset.recentHost = "1";
+  recentHost.dataset.kind = kind;
+  recentHost.dataset.fixed = fixed.filter((color) => color !== "transparent").join(",");
+  fillRecentHost(recentHost, kind, fixed);
+  row.append(recentHost);
+  row.append(colorPicker(kind));
 }
 
 function choiceButton(label, group, value) {
@@ -1851,20 +2040,45 @@ function iconChoice(markup, group, value, label) {
   return button;
 }
 
+function defaultPickerColor(kind) {
+  if (kind === "letter") {
+    return drawStyle.textColor || (drawStyle.strokeColor && drawStyle.strokeColor !== "transparent" ? drawStyle.strokeColor : "#1e1e1e");
+  }
+  if (kind === "border") return "#1e1e1e";
+  if (kind === "stroke") return drawStyle.strokeColor && drawStyle.strokeColor !== "transparent" ? drawStyle.strokeColor : "#1e1e1e";
+  if (kind === "ground") return "#fff3bf";
+  return "#a5d8ff";
+}
+
 function colorPicker(kind) {
+  const wrap = document.createElement("label");
+  wrap.className = "color-chip";
+  wrap.dataset.kind = kind;
+  const titles = {
+    letter: "More ink colors",
+    stroke: "More outline colors",
+    border: "More outline colors",
+    ground: "More background colors",
+    fill: "More wash colors",
+  };
+  wrap.title = titles[kind] || "More colors";
+  const face = document.createElement("span");
+  face.className = "color-chip-face";
+  const start = defaultPickerColor(kind);
+  face.style.setProperty("--chip", start);
   const input = document.createElement("input");
   input.type = "color";
-  input.className = "color-picker";
+  input.className = "color-picker-native";
   input.dataset.kind = kind;
-  input.value = kind === "stroke" || kind === "border" ? (kind === "border" ? "#1e1e1e" : drawStyle.strokeColor) : kind === "ground" ? "#fff3bf" : "#a5d8ff";
-  input.title = kind === "stroke" ? "Custom ink" : kind === "border" ? "Custom outline" : kind === "ground" ? "Custom background" : "Custom wash";
-  input.setAttribute("aria-label", input.title);
+  input.value = /^#[0-9a-fA-F]{6}$/.test(start) ? start : "#1e1e1e";
+  input.setAttribute("aria-label", wrap.title);
   input.addEventListener("input", () => {
-    const patch = kind === "stroke" ? { strokeColor: input.value } : kind === "ground" ? { textFill: input.value } : kind === "border" ? { borderColor: input.value } : { backgroundColor: input.value };
-    applyStyle(patch, false);
+    face.style.setProperty("--chip", input.value);
+    applyPickedColor(kind, input.value, false);
   });
-  input.addEventListener("change", () => applyStyle({}, true));
-  return input;
+  input.addEventListener("change", () => applyPickedColor(kind, input.value, true));
+  wrap.append(face, input);
+  return wrap;
 }
 
 function panelHead(title, onClose) {
@@ -1910,18 +2124,12 @@ function buildProperties() {
   piece.className = "frame-note";
   piece.dataset.audience = "member";
   piece.textContent = "This piece of the merge. Click the merge once to move the whole thing.";
-  const ink = propGroup("Ink", "color-row", "text");
-  STROKE_COLORS.filter((color) => color !== "transparent").forEach((color) => ink.row.append(swatch(color, "stroke")));
-  ink.row.append(colorPicker("stroke"));
+  const ink = propGroup("Ink", "color-row", "hand");
+  appendColorControls(ink.row, "letter", STROKE_COLORS.filter((color) => color !== "transparent"));
   const outline = propGroup("Outline", "color-row", "shape");
-  STROKE_COLORS.forEach((color) => outline.row.append(swatch(color, "stroke")));
-  const outlinePicker = colorPicker("stroke");
-  outlinePicker.title = "Custom outline";
-  outlinePicker.setAttribute("aria-label", "Custom outline");
-  outline.row.append(outlinePicker);
+  appendColorControls(outline.row, "stroke", STROKE_COLORS);
   const wash = propGroup("Wash", "color-row");
-  FILL_COLORS.forEach((color) => wash.row.append(swatch(color, "fill")));
-  wash.row.append(colorPicker("fill"));
+  appendColorControls(wash.row, "fill", FILL_COLORS);
   const texture = propGroup("Texture");
   texture.row.append(choiceButton("Lines", "fillStyle", "hachure"), choiceButton("Cross", "fillStyle", "cross-hatch"), choiceButton("Flat", "fillStyle", "solid"));
   const weight = propGroup("Weight");
@@ -1980,6 +2188,20 @@ function buildProperties() {
   unmergeButton.textContent = "Unmerge";
   unmergeButton.addEventListener("click", unmergeSelection);
   combine.row.append(mergeButton, unmergeButton);
+  const flip = propGroup("Flip", "choice-row", "stack");
+  [
+    ["h", "Flip horizontal"],
+    ["v", "Flip vertical"],
+  ].forEach(([axis, label]) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "choice icon-choice";
+    button.title = label;
+    button.setAttribute("aria-label", label);
+    button.innerHTML = flipIcon(axis);
+    button.addEventListener("click", () => flipSelection(axis));
+    flip.row.append(button);
+  });
   const stack = propGroup("Stack", "choice-row", "stack");
   [
     ["floor", "back", "Send to the floor"],
@@ -1997,11 +2219,9 @@ function buildProperties() {
     stack.row.append(button);
   });
   const ground = propGroup("Background", "color-row", "text");
-  TEXT_GROUNDS.forEach((color) => ground.row.append(swatch(color, "ground")));
-  ground.row.append(colorPicker("ground"));
+  appendColorControls(ground.row, "ground", TEXT_GROUNDS);
   const border = propGroup("Outline", "color-row", "text");
-  TEXT_BORDERS.forEach((color) => border.row.append(swatch(color, "border")));
-  border.row.append(colorPicker("border"));
+  appendColorControls(border.row, "border", TEXT_BORDERS);
   const hand = propGroup("Hand", "choice-row", "hand");
   hand.row.append(
     choiceButton("Hand", "fontFamily", "hand"),
@@ -2010,8 +2230,14 @@ function buildProperties() {
     choiceButton("Print", "fontFamily", "print"),
     choiceButton("Book", "fontFamily", "book"),
   );
-  const align = propGroup("Align", "choice-row", "text");
+  const align = propGroup("Align", "choice-row", "hand");
   align.row.append(iconChoice(alignIcon("left"), "align", "left", "Align left"), iconChoice(alignIcon("center"), "align", "center", "Align center"), iconChoice(alignIcon("right"), "align", "right", "Align right"));
+  const place = propGroup("Place", "choice-row", "hand");
+  place.row.append(
+    iconChoice(placeIcon("top"), "verticalAlign", "top", "Place at top"),
+    iconChoice(placeIcon("middle"), "verticalAlign", "middle", "Place in middle"),
+    iconChoice(placeIcon("bottom"), "verticalAlign", "bottom", "Place at bottom"),
+  );
   const listStyle = propGroup("List", "choice-row", "list");
   listStyle.row.append(
     choiceButton("•", "listStyle", "bullet"),
@@ -2019,11 +2245,21 @@ function buildProperties() {
     choiceButton("–", "listStyle", "dash"),
     choiceButton("None", "listStyle", "plain"),
   );
-  host.append(page, piece, ink.wrap, ground.wrap, border.wrap, lettering.wrap, hand.wrap, frameNote, align.wrap, listStyle.wrap, words.wrap, outline.wrap, wash.wrap, texture.wrap, weight.wrap, rhythm.wrap, wobble.wrap, corners.wrap, fade.wrap, stack.wrap, combine.wrap);
+  host.append(page, piece, ink.wrap, ground.wrap, border.wrap, lettering.wrap, hand.wrap, frameNote, align.wrap, place.wrap, listStyle.wrap, words.wrap, outline.wrap, wash.wrap, texture.wrap, weight.wrap, rhythm.wrap, wobble.wrap, corners.wrap, fade.wrap, flip.wrap, stack.wrap, combine.wrap);
+}
+
+function placeIcon(kind) {
+  const marks = {
+    top: ["M3 4h12", "M5 8h8", "M6.5 12h5"],
+    middle: ["M5 5h8", "M3 9.5h12", "M5 14h8"],
+    bottom: ["M6.5 6h5", "M5 10h8", "M3 14h12"],
+  };
+  const lines = (marks[kind] || marks.middle).map((d) => `<path d="${d}"/>`).join("");
+  return `<svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">${lines}</svg>`;
 }
 
 function fontSizeField() {
-  const field = propGroup("Font size", "size-field", "both");
+  const field = propGroup("Font size", "size-field", "hand");
   const input = document.createElement("input");
   input.type = "number";
   input.min = "8";
@@ -2103,8 +2339,10 @@ function syncProperties() {
     return current.every((element) => element[key] === first) ? first : null;
   };
   for (const button of host.querySelectorAll(".swatch")) {
-    const field = button.dataset.kind === "stroke" ? "strokeColor" : button.dataset.kind === "ground" ? "textFill" : button.dataset.kind === "border" ? "borderColor" : "backgroundColor";
-    let value = read(field);
+    const field = colorKindField(button.dataset.kind);
+    let value = field === "textColor"
+      ? (current.length ? letterColor(current[0]) : (drawStyle.textColor || drawStyle.strokeColor || "#1e1e1e"))
+      : read(field);
     if ((field === "textFill" || field === "borderColor" || field === "strokeColor") && !value) value = "transparent";
     if (field === "strokeColor" && value === "none") value = "transparent";
     button.setAttribute("aria-pressed", String(value === button.dataset.color));
@@ -2112,7 +2350,8 @@ function syncProperties() {
   for (const button of host.querySelectorAll(".choice[data-group]")) {
     const group = button.dataset.group;
     let value = group === "letterSize" ? read("fontSize") : read(group);
-    if (group === "align" && !value) value = "left";
+    if (group === "align") value = current.length ? letterAlign(current[0]) : (value || "left");
+    if (group === "verticalAlign") value = current.length ? letterVerticalAlign(current[0]) : (value || "middle");
     if (group === "listStyle" && !value) value = "bullet";
     if (group === "fontFamily" && !value) value = "hand";
     button.setAttribute("aria-pressed", String(String(value) === button.dataset.value));
@@ -2123,10 +2362,18 @@ function syncProperties() {
   const opacity = host.querySelector("#opacity");
   const opacityValue = read("opacity");
   if (opacity && opacityValue != null && document.activeElement !== opacity) opacity.value = String(opacityValue);
-  for (const input of host.querySelectorAll(".color-picker")) {
-    const field = input.dataset.kind === "stroke" ? "strokeColor" : input.dataset.kind === "ground" ? "textFill" : input.dataset.kind === "border" ? "borderColor" : "backgroundColor";
-    const value = read(field);
-    if (value && value !== "transparent" && document.activeElement !== input) input.value = value;
+  for (const chip of host.querySelectorAll(".color-chip")) {
+    const input = chip.querySelector(".color-picker-native");
+    const face = chip.querySelector(".color-chip-face");
+    if (!input) continue;
+    const field = colorKindField(input.dataset.kind);
+    const value = field === "textColor"
+      ? (current.length ? letterColor(current[0]) : (drawStyle.textColor || drawStyle.strokeColor || "#1e1e1e"))
+      : read(field);
+    if (value && value !== "transparent" && document.activeElement !== input) {
+      input.value = value;
+      if (face) face.style.setProperty("--chip", value);
+    }
   }
   const pageSlider = host.querySelector("#page-opacity");
   if (pageSlider && document.activeElement !== pageSlider) pageSlider.value = String(sheet().backgroundOpacity ?? 100);
@@ -2210,7 +2457,7 @@ function updateDraft(element, world, shiftKey) {
 
 function finalizeDraft(element) {
   const list = elements();
-  if (element.type === "rectangle" || element.type === "diamond" || element.type === "ellipse" || element.type === "sticky") {
+  if (element.type === "rectangle" || element.type === "diamond" || element.type === "triangle" || element.type === "ellipse" || element.type === "sticky") {
     const box = normalizeBox(element.x, element.y, element.width, element.height);
     const tiny = box.width < 4 && box.height < 4;
     if (element.type === "sticky" && tiny) {
@@ -2270,10 +2517,16 @@ canvas.addEventListener("pointerdown", (event) => {
     mode = "text";
     return;
   }
-  if (tool === "selection") {
+  if (tool === "selection" || tool === "rotate") {
     const active = activeHandleTarget();
     const handle = active && hitHandle(active.element, world.x, world.y, handleSize());
-    if (handle) {
+    if ((handle === "rotate" || (tool === "rotate" && handle)) && active && !active.group) {
+      beginChange();
+      beginRotateGesture([active.element], world);
+      resizeGroupId = null;
+      return;
+    }
+    if (handle && tool === "selection") {
       mode = "resize";
       resizeHandle = handle;
       resizeStart = clone(active.element);
@@ -2283,6 +2536,22 @@ canvas.addEventListener("pointerdown", (event) => {
     }
     focusMember = null;
     const hit = hitTest(elements(), world.x, world.y, 10);
+    if (tool === "rotate") {
+      if (hit) {
+        if (!selected.has(hit.id)) selected = new Set([hit.id]);
+        beginChange();
+        beginRotateGesture(elements().filter((element) => selected.has(element.id)), world);
+        paintMain();
+        return;
+      }
+      mode = "marquee";
+      marqueeBase = new Set();
+      selected = new Set();
+      focusMember = null;
+      marquee = { x: world.x, y: world.y, width: 0, height: 0 };
+      paintMain();
+      return;
+    }
     if (hit && (event.ctrlKey || event.metaKey)) {
       if (!selected.has(hit.id)) selected = new Set([hit.id]);
       beginChange();
@@ -2388,9 +2657,18 @@ canvas.addEventListener("pointermove", (event) => {
     paintMain();
     return;
   }
+  if (mode === "rotate" && rotateOrigins.length && rotatePivot) {
+    const angle = Math.atan2(world.y - rotatePivot.y, world.x - rotatePivot.x);
+    const delta = angle - rotatePointerAngle;
+    const rotated = rotateElements(rotateOrigins, rotateOrigins.map((element) => element.id), delta, event.shiftKey);
+    const map = new Map(rotated.map((element) => [element.id, element]));
+    sheet().elements = elements().map((element) => map.get(element.id) || element);
+    paintMain();
+    return;
+  }
   if (mode === "marquee" && pointerStart) {
     marquee = normalizeBox(pointerStart.x, pointerStart.y, world.x - pointerStart.x, world.y - pointerStart.y);
-    selected = new Set(elements().filter((element) => intersects(boxOf(element), marquee)).map((element) => element.id));
+    selected = new Set(elements().filter((element) => intersects(worldBounds(element), marquee)).map((element) => element.id));
     paintMain();
   }
 });
@@ -2424,6 +2702,8 @@ canvas.addEventListener("pointerup", (event) => {
   draft = null;
   resizeStart = null;
   resizeGroupId = null;
+  rotateOrigins = [];
+  rotatePivot = null;
   handScroll = null;
   alignGuides = [];
   moveIsDuplicate = false;
@@ -2488,15 +2768,14 @@ editor.addEventListener("input", () => {
     element.items = editor.value.split("\n");
     element.height = blockHeight(element);
     if (target.group) fitGroup(target.group);
-    positionEditor();
   } else {
     element.text = editor.value;
     if (element.type === "text") {
       element.height = blockHeight(element);
       if (target.group) fitGroup(target.group);
-      positionEditor();
     }
   }
+  positionEditor();
   persist();
   paintMain();
 });
