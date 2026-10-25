@@ -7,6 +7,7 @@ export const DEFAULT_STYLE = {
   roughness: 1,
   opacity: 100,
   fontSize: 24,
+  fontFamily: "round",
   roundness: 0,
   textFill: "transparent",
   borderColor: "transparent",
@@ -42,9 +43,10 @@ export function createElement(type, x, y, style = DEFAULT_STYLE) {
     roughness: style.roughness,
     opacity: style.opacity,
     fontSize: style.fontSize,
+    fontFamily: style.fontFamily || "round",
     roundness: style.roundness || 0,
   };
-  if (type === "line" || type === "arrow" || type === "freedraw") {
+  if (type === "line" || type === "arrow" || type === "elbow" || type === "curve" || type === "freedraw") {
     element.points = [{ x: 0, y: 0 }];
   }
   if (type === "sticky") {
@@ -119,8 +121,16 @@ export function withAbsPoints(element, points) {
   };
 }
 
+export function isArrowType(type) {
+  return type === "arrow" || type === "elbow" || type === "curve";
+}
+
+export function isLinearType(type) {
+  return type === "line" || type === "freedraw" || isArrowType(type);
+}
+
 export function boxOf(element) {
-  if (element.type === "line" || element.type === "arrow" || element.type === "freedraw") {
+  if (isLinearType(element.type)) {
     const points = absPoints(element);
     let minX = Infinity;
     let minY = Infinity;
@@ -173,6 +183,123 @@ export function trianglePoly(box) {
     { x: box.x + box.width, y: box.y + box.height },
     { x: box.x, y: box.y + box.height },
   ];
+}
+
+export function trapezoidPoly(box) {
+  const inset = Math.max(0, box.width * 0.18);
+  return [
+    { x: box.x + inset, y: box.y },
+    { x: box.x + box.width - inset, y: box.y },
+    { x: box.x + box.width, y: box.y + box.height },
+    { x: box.x, y: box.y + box.height },
+  ];
+}
+
+export function parallelogramPoly(box) {
+  const skew = Math.max(0, box.width * 0.22);
+  return [
+    { x: box.x + skew, y: box.y },
+    { x: box.x + box.width, y: box.y },
+    { x: box.x + box.width - skew, y: box.y + box.height },
+    { x: box.x, y: box.y + box.height },
+  ];
+}
+
+export function regularPoly(box, sides, rotation = -Math.PI / 2) {
+  const cx = box.x + box.width / 2;
+  const cy = box.y + box.height / 2;
+  const rx = Math.max(0.5, box.width / 2);
+  const ry = Math.max(0.5, box.height / 2);
+  const points = [];
+  for (let index = 0; index < sides; index += 1) {
+    const angle = rotation + (index * Math.PI * 2) / sides;
+    points.push({ x: cx + Math.cos(angle) * rx, y: cy + Math.sin(angle) * ry });
+  }
+  return points;
+}
+
+export function starPoly(box, tips = 5, inner = 0.42) {
+  const cx = box.x + box.width / 2;
+  const cy = box.y + box.height / 2;
+  const rx = Math.max(0.5, box.width / 2);
+  const ry = Math.max(0.5, box.height / 2);
+  const points = [];
+  for (let index = 0; index < tips * 2; index += 1) {
+    const angle = -Math.PI / 2 + (index * Math.PI) / tips;
+    const scale = index % 2 === 0 ? 1 : inner;
+    points.push({ x: cx + Math.cos(angle) * rx * scale, y: cy + Math.sin(angle) * ry * scale });
+  }
+  return points;
+}
+
+export function closedShapePoly(element) {
+  const box = boxOf(element);
+  if (element.type === "diamond") return diamondPoly(box);
+  if (element.type === "triangle") return trianglePoly(box);
+  if (element.type === "trapezoid") return trapezoidPoly(box);
+  if (element.type === "parallelogram") return parallelogramPoly(box);
+  if (element.type === "pentagon") return regularPoly(box, 5);
+  if (element.type === "hexagon") return regularPoly(box, 6);
+  if (element.type === "star") return starPoly(box);
+  return null;
+}
+
+export function elbowPoints(start, end) {
+  const midX = (start.x + end.x) / 2;
+  return [
+    { x: start.x, y: start.y },
+    { x: midX, y: start.y },
+    { x: midX, y: end.y },
+    { x: end.x, y: end.y },
+  ];
+}
+
+export function curveControl(start, end) {
+  const mx = (start.x + end.x) / 2;
+  const my = (start.y + end.y) / 2;
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const len = Math.hypot(dx, dy) || 1;
+  const offset = len * 0.35;
+  return {
+    x: mx - (dy / len) * offset,
+    y: my + (dx / len) * offset,
+  };
+}
+
+export function connectorPoints(element) {
+  const points = absPoints(element);
+  if (points.length < 2) return points;
+  const start = points[0];
+  const end = points[points.length - 1];
+  if (element.type === "elbow") return elbowPoints(start, end);
+  if (element.type === "curve") return [start, curveControl(start, end), end];
+  return points;
+}
+
+function sampleQuadratic(a, b, c, steps = 16) {
+  const out = [];
+  for (let index = 0; index <= steps; index += 1) {
+    const t = index / steps;
+    const u = 1 - t;
+    out.push({
+      x: u * u * a.x + 2 * u * t * b.x + t * t * c.x,
+      y: u * u * a.y + 2 * u * t * b.y + t * t * c.y,
+    });
+  }
+  return out;
+}
+
+export function strokePoints(element) {
+  if (element.type === "curve") {
+    const points = absPoints(element);
+    if (points.length < 2) return points;
+    const start = points[0];
+    const end = points[points.length - 1];
+    return sampleQuadratic(start, curveControl(start, end), end);
+  }
+  if (element.type === "elbow") return connectorPoints(element);
+  return absPoints(element);
 }
 
 export function distToSegment(px, py, a, b) {
@@ -277,8 +404,8 @@ export function hitsElement(element, x, y, pad) {
   const px = local.x;
   const py = local.y;
   const strokePad = pad + (element.strokeWidth || 1);
-  if (element.type === "line" || element.type === "arrow" || element.type === "freedraw") {
-    const points = absPoints(element);
+  if (isLinearType(element.type)) {
+    const points = strokePoints(element);
     for (let i = 1; i < points.length; i++) {
       if (distToSegment(px, py, points[i - 1], points[i]) <= strokePad) return true;
     }
@@ -295,13 +422,8 @@ export function hitsElement(element, x, y, pad) {
     return nx * nx + ny * ny <= 1;
   }
 
-  if (element.type === "diamond") {
-    return pointInPoly(px, py, diamondPoly(box));
-  }
-
-  if (element.type === "triangle") {
-    return pointInPoly(px, py, trianglePoly(box));
-  }
+  const poly = closedShapePoly(element);
+  if (poly) return pointInPoly(px, py, poly);
 
   return (
     px >= box.x - pad &&
@@ -319,7 +441,7 @@ export function hitTest(elements, x, y, pad) {
 }
 
 export function handlesFor(element) {
-  if (element.type === "line" || element.type === "arrow" || element.type === "freedraw") {
+  if (isLinearType(element.type)) {
     const points = absPoints(element);
     return [
       { id: "start", ...localToWorld(element, points[0].x, points[0].y) },

@@ -124,13 +124,13 @@ button:disabled { opacity: 0.4; cursor: default; }
 }
 
 .topbar {
-  top: 14px;
+  top: 8px;
   left: 14px;
   right: 14px;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   gap: 12px;
-  align-items: start;
+  align-items: center;
   pointer-events: none;
 }
 
@@ -153,6 +153,7 @@ button:disabled { opacity: 0.4; cursor: default; }
 
 .brand-island {
   position: relative;
+  grid-column: 1;
   justify-self: start;
   gap: 8px;
   padding: 6px 8px 6px 10px;
@@ -177,28 +178,15 @@ a.mark { text-decoration: none; }
 a.mark:hover { background: var(--hover); }
 
 .brand-name {
-  display: grid;
-  gap: 0;
-  line-height: 1.05;
+  display: block;
   padding-right: 4px;
   text-decoration: none;
   color: inherit;
-}
-
-.brand-name strong {
   font-family: var(--display);
   font-size: 17px;
   font-weight: 800;
   letter-spacing: -0.04em;
-}
-
-.brand-name span {
-  font-family: var(--menu);
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--accent);
+  line-height: 1;
 }
 
 .workspace-nav {
@@ -240,25 +228,28 @@ a.mark:hover { background: var(--hover); }
   color: var(--chrome-ink);
   box-shadow: var(--chrome-shadow);
   border-radius: 18px;
-  padding: 7px;
-  gap: 3px;
+  padding: 6px;
+  gap: 2px;
 }
 
 .tool-island {
   grid-column: 2;
   justify-self: center;
-  max-width: 100%;
-  overflow-x: auto;
+  width: max-content;
+  max-width: min(100%, calc(100vw - 28px));
+  flex-wrap: wrap;
+  justify-content: center;
+  overflow: visible;
 }
 
-.tool-island button:hover,
+.tool-island .tool-button:hover,
 .zoom-island button:hover,
 .brand-island > .icon-button:hover {
   background: var(--chrome-hover);
 }
 
-.tool-island button[aria-pressed="true"],
-.tool-island button[aria-pressed="true"]:hover {
+.tool-island .tool-button[aria-pressed="true"],
+.tool-island .tool-button[aria-pressed="true"]:hover {
   background: var(--chrome-pressed);
   color: var(--chrome-pressed-ink);
 }
@@ -271,13 +262,17 @@ a.mark:hover { background: var(--hover); }
 .tool-button,
 .zoom-island button,
 .brand-island > .icon-button {
-  min-width: 40px;
-  height: 40px;
+  min-width: 36px;
+  height: 36px;
   display: grid;
   place-items: center;
-  padding: 0 8px;
-  border-radius: 12px;
+  padding: 0 6px;
+  border-radius: 11px;
   color: var(--chrome-ink);
+}
+
+.tool-island .tool-button {
+  flex: 0 0 auto;
 }
 
 .brand-island > .icon-button {
@@ -641,6 +636,32 @@ dialog input[type="search"] {
 
 .opacity-wrap { display: flex; flex-direction: column; gap: 2px; width: 100%; }
 
+.properties .size-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.properties .size-field input[type="number"] {
+  flex: 1;
+  min-width: 0;
+  height: 34px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.06);
+  color: inherit;
+  padding: 0 10px;
+  font: inherit;
+  font-weight: 700;
+}
+
+.properties .px-unit {
+  color: rgba(255, 255, 255, 0.55);
+  font-weight: 800;
+  font-size: 13px;
+}
+
 .swatch {
   width: 22px;
   height: 22px;
@@ -821,13 +842,9 @@ dialog input[type="search"] { width: 100%; }
   .tool-island {
     order: 3;
     width: 100%;
-    justify-self: stretch;
     max-width: 100%;
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-    scrollbar-width: none;
+    justify-content: center;
   }
-  .tool-island::-webkit-scrollbar { display: none; }
   .brand-name { display: none; }
   .workspace-nav a { padding: 6px 10px; font-size: 12px; }
   .properties {

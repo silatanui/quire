@@ -139,29 +139,33 @@ button:disabled { opacity: 0.45; cursor: default; }
 }
 .tool-island {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
+  justify-content: center;
   gap: 2px;
-  max-width: 100%;
-  overflow-x: auto;
+  width: max-content;
+  max-width: min(100%, calc(100vw - 24px));
+  overflow: visible;
   padding: 6px;
   background: #000000;
   border-radius: 10px;
   box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.06), 0 10px 24px rgba(0, 0, 0, 0.18);
 }
-.tool-island button {
-  width: 40px;
-  height: 40px;
-  min-width: 40px;
+.tool-island .tool-button {
+  width: 36px;
+  height: 36px;
+  min-width: 36px;
+  flex: 0 0 auto;
   padding: 0;
   border-radius: 10px;
   color: #f4f4f8;
   display: grid;
   place-items: center;
 }
-.tool-island button svg { display: block; }
-.tool-island button:hover { background: #32323c; }
-.tool-island button[aria-pressed="true"],
-.tool-island button[aria-pressed="true"]:hover {
+.tool-island .tool-button svg { display: block; }
+.tool-island .tool-button:hover { background: #32323c; }
+.tool-island .tool-button[aria-pressed="true"],
+.tool-island .tool-button[aria-pressed="true"]:hover {
   background: #ff0000;
   color: #ffffff;
 }

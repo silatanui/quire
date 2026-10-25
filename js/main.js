@@ -6,8 +6,8 @@ import {
   clone,
   constrainBox,
   createElement,
-  diamondPoly,
-  trianglePoly,
+  closedShapePoly,
+  connectorPoints,
   duplicateElements,
   elementCenter,
   applyElementTransform,
@@ -15,6 +15,7 @@ import {
   handlesFor,
   hitHandle,
   hitTest,
+  isArrowType,
   normalizeBox,
   parseScene,
   reorder,
@@ -24,12 +25,13 @@ import {
   sceneBounds,
   serializeScene,
   snapAngle,
+  strokePoints,
   translate,
   withAbsPoints,
   worldBounds,
   worldToLocal,
   intersects,
-} from "./model.js";
+} from "./model.js?v=fontfam";
 import {
   clipboardImageFiles,
   dataTransferImageFiles,
@@ -44,7 +46,19 @@ import {
   rememberColor,
 } from "./colors.js";
 
-const FONT = '"Varela Round", "Segoe UI", sans-serif';
+const FONT_FAMILIES = {
+  hand: { label: "Hand", stack: '"Caveat", "Segoe Print", cursive' },
+  marker: { label: "Marker", stack: '"Kalam", "Comic Sans MS", cursive' },
+  round: { label: "Round", stack: '"Varela Round", "Segoe UI", sans-serif' },
+  print: { label: "Print", stack: '"Nunito", "Segoe UI", sans-serif' },
+  book: { label: "Book", stack: '"Libre Baskerville", Georgia, serif' },
+};
+const FONT = FONT_FAMILIES.round.stack;
+
+function fontStack(element) {
+  const key = (element && element.fontFamily) || style.fontFamily || "round";
+  return (FONT_FAMILIES[key] || FONT_FAMILIES.round).stack;
+}
 const STORAGE_KEY = "drawexcal-v1";
 const NOTE_KEY = "drawexcal-note-dismissed";
 const PAPERS = ["#ffffff", "#f4f1ea", "#e7f2fb", "#fff4c2", "#fde8ef", "#e8f6ef", "#1e1e24"];
@@ -113,8 +127,15 @@ const TOOLS = [
   { id: "rectangle", label: "Rectangle", keys: ["r", "2"], title: "R or 2" },
   { id: "diamond", label: "Diamond", keys: ["d", "3"], title: "D or 3" },
   { id: "triangle", label: "Triangle", keys: ["g"], title: "G" },
+  { id: "trapezoid", label: "Trapezoid", keys: [], title: "Trapezoid" },
+  { id: "parallelogram", label: "Parallelogram", keys: [], title: "Parallelogram" },
+  { id: "pentagon", label: "Pentagon", keys: [], title: "Pentagon" },
+  { id: "hexagon", label: "Hexagon", keys: [], title: "Hexagon" },
+  { id: "star", label: "Star", keys: [], title: "Star" },
   { id: "ellipse", label: "Ellipse", keys: ["o", "4"], title: "O or 4" },
   { id: "arrow", label: "Arrow", keys: ["a", "5"], title: "A or 5" },
+  { id: "elbow", label: "Elbow arrow", keys: [], title: "Elbow arrow" },
+  { id: "curve", label: "Curve arrow", keys: [], title: "Curve arrow" },
   { id: "line", label: "Line", keys: ["l", "6"], title: "L or 6" },
   { id: "freedraw", label: "Draw", keys: ["p", "7"], title: "P or 7" },
   { id: "text", label: "Text", keys: ["t", "8"], title: "T or 8" },
@@ -186,8 +207,15 @@ const ICONS = {
   rectangle: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="6" width="16" height="12" rx="1.5"/></svg>',
   diamond: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3.5 20.5 12 12 20.5 3.5 12Z"/></svg>',
   triangle: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 4 20 19H4Z"/></svg>',
+  trapezoid: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M7 6h10l4 12H3Z"/></svg>',
+  parallelogram: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 6h12L16 18H4Z"/></svg>',
+  pentagon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3.5 20 9.2 17 19.5H7L4 9.2Z"/></svg>',
+  hexagon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3.5 19.5 8v8L12 20.5 4.5 16V8Z"/></svg>',
+  star: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m12 3.5 2.2 5.4 5.8.5-4.4 3.8 1.3 5.6L12 15.8 6.9 18.8l1.3-5.6L3.8 9.4l5.8-.5Z"/></svg>',
   ellipse: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><ellipse cx="12" cy="12" rx="8" ry="6"/></svg>',
   arrow: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 17 17.5 6.5"/><path d="M11 6h7v7"/></svg>',
+  elbow: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h8v10h7"/><path d="m16 14 3 3-3 3"/></svg>',
+  curve: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 7c8-1 10 11 14 11"/><path d="m16 15 3 3-4 1"/></svg>',
   line: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 18 18 6"/></svg>',
   freedraw: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 16c2-6 4-2 6-4s3-6 5-4 3 6 5 2"/></svg>',
   text: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 6h12M12 6v12"/></svg>',
@@ -685,11 +713,13 @@ function buildProperties() {
     iconChoice(wobbleIcon(1), "roughness", 1, "Loose"),
     iconChoice(wobbleIcon(2), "roughness", 2, "Wild"),
   );
+  rough.wrap.dataset.for = "decor";
   const edges = group("Corners");
   edges.row.append(
     iconChoice(cornerIcon(false), "roundness", 0, "Square corners"),
     iconChoice(cornerIcon(true), "roundness", 1, "Soft corners"),
   );
+  edges.wrap.dataset.for = "decor";
   const opacity = group("Fade");
   const slider = document.createElement("input");
   slider.type = "range";
@@ -705,9 +735,39 @@ function buildProperties() {
   scale.innerHTML = "<span>0</span><span>100</span>";
   opacity.row.className = "opacity-wrap";
   opacity.row.append(slider, scale);
-  const font = group("Lettering");
-  font.row.append(choice("S", "fontSize", 16), choice("M", "fontSize", 24), choice("L", "fontSize", 40));
+  const font = group("Font size");
+  font.row.className = "size-field";
+  const fontInput = document.createElement("input");
+  fontInput.type = "number";
+  fontInput.min = "8";
+  fontInput.max = "280";
+  fontInput.step = "1";
+  fontInput.id = "font-size";
+  fontInput.value = String(style.fontSize || 24);
+  fontInput.setAttribute("aria-label", "Font size in pixels");
+  const fontUnit = document.createElement("span");
+  fontUnit.className = "px-unit";
+  fontUnit.textContent = "px";
+  fontInput.addEventListener("input", () => {
+    if (fontInput.value.trim() === "") return;
+    const value = Number(fontInput.value);
+    if (!Number.isFinite(value)) return;
+    applyStyle({ fontSize: clamp(Math.round(value), 8, 280) }, false);
+  });
+  fontInput.addEventListener("change", () => {
+    const value = clamp(Math.round(Number(fontInput.value) || style.fontSize || 24), 8, 280);
+    fontInput.value = String(value);
+    applyStyle({ fontSize: value }, true);
+  });
+  font.row.append(fontInput, fontUnit);
   font.wrap.dataset.for = "letter";
+  const family = group("Font");
+  for (const [id, meta] of Object.entries(FONT_FAMILIES)) {
+    const button = choice(meta.label, "fontFamily", id);
+    button.style.fontFamily = meta.stack;
+    family.row.append(button);
+  }
+  family.wrap.dataset.for = "letter";
   const align = group("Align");
   align.row.append(
     iconChoice(alignIcon("left"), "align", "left", "Align left"),
@@ -755,9 +815,7 @@ function buildProperties() {
   texture.wrap.dataset.for = "shape";
   width.wrap.dataset.for = "shape";
   strokeStyle.wrap.dataset.for = "shape";
-  rough.wrap.dataset.for = "shape";
-  edges.wrap.dataset.for = "shape";
-  propertiesHost.append(ink.wrap, stroke.wrap, ground.wrap, border.wrap, fill.wrap, texture.wrap, width.wrap, strokeStyle.wrap, rough.wrap, edges.wrap, opacity.wrap, font.wrap, align.wrap, place.wrap, flip.wrap, layers.wrap);
+  propertiesHost.append(ink.wrap, stroke.wrap, ground.wrap, border.wrap, fill.wrap, texture.wrap, width.wrap, strokeStyle.wrap, rough.wrap, edges.wrap, opacity.wrap, font.wrap, family.wrap, align.wrap, place.wrap, flip.wrap, layers.wrap);
 }
 
 function placeIcon(kind) {
@@ -838,6 +896,7 @@ function syncProperties() {
     const audience = node.dataset.for;
     if (audience === "text") node.hidden = !textOnly;
     else if (audience === "letter") node.hidden = !lettering;
+    else if (audience === "decor") node.hidden = imageOnly;
     else if (audience === "shape") node.hidden = textOnly || imageOnly;
   });
   const read = (key) => {
@@ -845,6 +904,9 @@ function syncProperties() {
     const first = current[0][key];
     return current.every((element) => element[key] === first) ? first : null;
   };
+  const fontInput = propertiesHost.querySelector("#font-size");
+  const fontValue = read("fontSize");
+  if (fontInput && document.activeElement !== fontInput && fontValue != null) fontInput.value = String(fontValue);
   for (const button of propertiesHost.querySelectorAll(".swatch")) {
     const field = colorKindField(button.dataset.kind);
     let value = field === "textColor"
@@ -860,6 +922,7 @@ function syncProperties() {
     if (button.dataset.group === "verticalAlign") {
       value = current.length ? letterVerticalAlign(current[0]) : (value || "middle");
     }
+    if (button.dataset.group === "fontFamily") value = value || "round";
     button.setAttribute("aria-pressed", String(String(value) === button.dataset.value));
   }
   const opacity = propertiesHost.querySelector("#opacity");
@@ -909,7 +972,8 @@ function duplicateSelection() {
   requestRender();
 }
 
-const LABEL_TYPES = ["rectangle", "diamond", "triangle", "ellipse", "sticky"];
+const LABEL_TYPES = ["rectangle", "diamond", "triangle", "trapezoid", "parallelogram", "pentagon", "hexagon", "star", "ellipse", "sticky"];
+const CLOSED_SHAPE_TYPES = ["rectangle", "sticky", "ellipse", "diamond", "triangle", "trapezoid", "parallelogram", "pentagon", "hexagon", "star"];
 
 function hasStroke(element) {
   return Boolean(element.strokeColor) && element.strokeColor !== "transparent" && element.strokeColor !== "none";
@@ -947,6 +1011,59 @@ function textBlockStartY(box, contentH, padding, vAlign) {
   if (vAlign === "top") return box.y + padding;
   if (vAlign === "bottom") return box.y + Math.max(padding, box.height - padding - contentH);
   return box.y + Math.max(padding, (box.height - contentH) / 2);
+}
+
+function labelInnerBox(element) {
+  const box = boxOf(element);
+  let scale = 1;
+  if (element.type === "ellipse") scale = 0.62;
+  else if (element.type === "diamond" || element.type === "star") scale = 0.48;
+  else if (element.type === "triangle" || element.type === "pentagon") scale = 0.52;
+  else if (element.type === "trapezoid" || element.type === "parallelogram" || element.type === "hexagon") scale = 0.58;
+  if (scale < 1) {
+    const width = Math.max(4, box.width * scale);
+    const height = Math.max(4, box.height * scale);
+    return {
+      x: box.x + (box.width - width) / 2,
+      y: box.y + (box.height - height) / 2,
+      width,
+      height,
+      pad: Math.max(2, Math.min(width, height) * 0.05),
+    };
+  }
+  return { x: box.x, y: box.y, width: box.width, height: box.height, pad: 14 };
+}
+
+function fitShapeLabelFont(context, element, text, preferred, fontFamily) {
+  const inner = labelInnerBox(element);
+  const maxW = Math.max(4, inner.width - inner.pad * 2);
+  const maxH = Math.max(4, inner.height - inner.pad * 2);
+  const want = Math.max(8, Math.round(preferred || 24));
+  let lo = 8;
+  let hi = want;
+  let best = 8;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    context.font = `${mid}px ${fontFamily}`;
+    const lines = wrapLines(context, text || "", maxW);
+    const contentH = lines.length * mid * 1.25;
+    let fits = contentH <= maxH + 0.5;
+    if (fits) {
+      for (const line of lines) {
+        if (context.measureText(line).width > maxW + 0.5) {
+          fits = false;
+          break;
+        }
+      }
+    }
+    if (fits) {
+      best = mid;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  return { fontSize: best, inner, maxW, maxH };
 }
 
 function roughOptions(element) {
@@ -997,41 +1114,58 @@ function shapeDrawable(generator, element) {
   if (element.type === "text" || element.type === "image") return null;
   const stroked = hasStroke(element);
   const filled = isFilled(element);
-  const closed = element.type === "rectangle" || element.type === "sticky" || element.type === "ellipse" || element.type === "diamond" || element.type === "triangle";
+  const closed = CLOSED_SHAPE_TYPES.includes(element.type);
   if (!stroked && !filled) return null;
   if (!stroked && !closed) return null;
   const options = roughOptions(element);
   const box = normalizeBox(element.x, element.y, element.width, element.height);
   if (closed && (box.width < 1 || box.height < 1)) return null;
-  if (element.type === "triangle") {
-    return generator.polygon(trianglePoly(box).map((point) => [point.x, point.y]), options);
+  const poly = closedShapePoly(element);
+  if (poly) {
+    const radius = element.roundness ? Math.min(22, box.width / 4, box.height / 4) : 0;
+    if (radius >= 2 && (element.type === "trapezoid" || element.type === "parallelogram")) {
+      return generator.path(roundedPolyPath(poly, radius), options);
+    }
+    return generator.polygon(poly.map((point) => [point.x, point.y]), options);
   }
-  if (element.type === "rectangle" || element.type === "sticky" || element.type === "diamond") {
-    const points = element.type === "diamond"
-      ? diamondPoly(box)
-      : [
-        { x: box.x, y: box.y },
-        { x: box.x + box.width, y: box.y },
-        { x: box.x + box.width, y: box.y + box.height },
-        { x: box.x, y: box.y + box.height },
-      ];
+  if (element.type === "rectangle" || element.type === "sticky") {
+    const points = [
+      { x: box.x, y: box.y },
+      { x: box.x + box.width, y: box.y },
+      { x: box.x + box.width, y: box.y + box.height },
+      { x: box.x, y: box.y + box.height },
+    ];
     const radius = element.roundness ? Math.min(28, box.width / 3, box.height / 3) : 0;
     if (radius >= 2) return generator.path(roundedPolyPath(points, radius), options);
-    if (element.type === "diamond") return generator.polygon(points.map((point) => [point.x, point.y]), options);
     return generator.rectangle(box.x, box.y, box.width, box.height, options);
   }
   if (element.type === "ellipse") return generator.ellipse(box.x + box.width / 2, box.y + box.height / 2, box.width, box.height, options);
-  const points = absPoints(element);
+  if (element.type === "curve") {
+    const points = connectorPoints(element);
+    if (points.length < 3) return null;
+    const head = 12 + (element.strokeWidth || 2) * 2;
+    const end = points[points.length - 1];
+    const prev = points[points.length - 2];
+    const length = Math.hypot(end.x - prev.x, end.y - prev.y) || 1;
+    const keep = Math.max(0, length - head * 0.65) / length;
+    const trimmed = [
+      points[0],
+      points[1],
+      { x: prev.x + (end.x - prev.x) * keep, y: prev.y + (end.y - prev.y) * keep },
+    ];
+    return generator.curve(trimmed.map((point) => [point.x, point.y]), options);
+  }
+  const points = element.type === "elbow" ? connectorPoints(element) : absPoints(element);
   if (points.length < 2) return null;
   if (element.type === "freedraw") {
     const tuples = points.map((point) => [point.x, point.y]);
     return tuples.length < 4 ? generator.linearPath(tuples, options) : generator.curve(tuples, options);
   }
   let path = points;
-  if (element.type === "arrow") {
+  if (isArrowType(element.type)) {
     const end = points[points.length - 1];
     const prev = points[points.length - 2];
-    const head = 12 + element.strokeWidth * 2;
+    const head = 12 + (element.strokeWidth || 2) * 2;
     const length = Math.hypot(end.x - prev.x, end.y - prev.y) || 1;
     const keep = Math.max(0, length - head * 0.65) / length;
     path = points.slice(0, -1).concat([{ x: prev.x + (end.x - prev.x) * keep, y: prev.y + (end.y - prev.y) * keep }]);
@@ -1040,15 +1174,15 @@ function shapeDrawable(generator, element) {
 }
 
 function arrowHeadDrawable(generator, element) {
-  if (element.type !== "arrow" || !hasStroke(element)) return null;
-  const points = absPoints(element);
+  if (!isArrowType(element.type) || !hasStroke(element)) return null;
+  const points = strokePoints(element);
   if (points.length < 2) return null;
   const end = points[points.length - 1];
   const prev = points[points.length - 2];
   const length = Math.hypot(end.x - prev.x, end.y - prev.y);
   if (length < 8) return null;
   const angle = Math.atan2(end.y - prev.y, end.x - prev.x);
-  const head = 16 + element.strokeWidth * 2;
+  const head = 16 + (element.strokeWidth || 2) * 2;
   const spread = 0.42;
   return generator.polygon(
     [
@@ -1083,7 +1217,7 @@ function wrapLines(context, text, maxWidth) {
   return lines.length ? lines : [""];
 }
 
-function paintTextFrame(context, element) {
+function paintTextFrame(context, element, roughCanvas) {
   if (element.type !== "text") return;
   const box = boxOf(element);
   const fill = element.textFill;
@@ -1091,8 +1225,33 @@ function paintTextFrame(context, element) {
   const hasFill = fill && fill !== "transparent";
   const hasBorder = border && border !== "transparent";
   if (!hasFill && !hasBorder) return;
+  const x = box.x - 8;
+  const y = box.y - 4;
+  const width = box.width + 16;
+  const height = box.height + 8;
+  const radius = element.roundness ? Math.min(16, width / 3, height / 3) : 0;
+  const roughness = element.roughness ?? 0;
+  if (roughCanvas && roughness > 0) {
+    const options = {
+      seed: element.seed || 1,
+      roughness,
+      bowing: 1,
+      stroke: hasBorder ? border : "none",
+      strokeWidth: hasBorder ? 2.5 : 0,
+      fill: hasFill ? fill : undefined,
+      fillStyle: "solid",
+    };
+    if (radius > 0) {
+      const r = radius;
+      const path = `M ${x + r} ${y} L ${x + width - r} ${y} Q ${x + width} ${y} ${x + width} ${y + r} L ${x + width} ${y + height - r} Q ${x + width} ${y + height} ${x + width - r} ${y + height} L ${x + r} ${y + height} Q ${x} ${y + height} ${x} ${y + height - r} L ${x} ${y + r} Q ${x} ${y} ${x + r} ${y} Z`;
+      roughCanvas.draw(roughCanvas.generator.path(path, options));
+    } else {
+      roughCanvas.draw(roughCanvas.generator.rectangle(x, y, width, height, options));
+    }
+    return;
+  }
   context.beginPath();
-  context.roundRect(box.x - 8, box.y - 4, box.width + 16, box.height + 8, 10);
+  context.roundRect(x, y, width, height, radius);
   if (hasFill) {
     context.fillStyle = fill;
     context.fill();
@@ -1104,28 +1263,37 @@ function paintTextFrame(context, element) {
   }
 }
 
-function drawLabel(context, element) {
-  paintTextFrame(context, element);
+function drawLabel(context, element, roughCanvas) {
+  paintTextFrame(context, element, roughCanvas);
   if (!element.text || (editing && editing.id === element.id)) return;
   if (element.type !== "text" && !element.text) return;
   const box = boxOf(element);
-  const fontSize = element.fontSize || 24;
   const align = letterAlign(element);
   context.save();
   context.fillStyle = letterColor(element);
-  context.font = `${fontSize}px ${FONT}`;
-  const padding = element.type === "text" ? 4 : 14;
-  const lines = wrapLines(context, element.text, Math.max(20, box.width - padding * 2));
-  const lineHeight = fontSize * 1.25;
   context.textBaseline = "top";
   context.textAlign = align;
+  const family = fontStack(element);
   if (element.type === "text") {
+    const fontSize = element.fontSize || 24;
+    const padding = 4;
+    context.font = `${fontSize}px ${family}`;
+    const lines = wrapLines(context, element.text, Math.max(20, box.width - padding * 2));
+    const lineHeight = fontSize * 1.25;
     const x = align === "center" ? box.x + box.width / 2 : align === "right" ? box.x + box.width - 2 : box.x + 2;
     const start = textBlockStartY(box, lines.length * lineHeight, padding, letterVerticalAlign(element));
     lines.forEach((line, index) => context.fillText(line, x, start + index * lineHeight));
   } else {
-    const start = textBlockStartY(box, lines.length * lineHeight, padding, letterVerticalAlign(element));
-    const x = align === "left" ? box.x + padding : align === "right" ? box.x + box.width - padding : box.x + box.width / 2;
+    const fit = fitShapeLabelFont(context, element, element.text, element.fontSize || 24, family);
+    context.font = `${fit.fontSize}px ${family}`;
+    const lines = wrapLines(context, element.text, fit.maxW);
+    const lineHeight = fit.fontSize * 1.25;
+    const start = textBlockStartY(fit.inner, lines.length * lineHeight, fit.inner.pad, letterVerticalAlign(element));
+    const x = align === "left"
+      ? fit.inner.x + fit.inner.pad
+      : align === "right"
+        ? fit.inner.x + fit.inner.width - fit.inner.pad
+        : fit.inner.x + fit.inner.width / 2;
     lines.forEach((line, index) => context.fillText(line, x, start + index * lineHeight));
   }
   context.restore();
@@ -1144,7 +1312,7 @@ function drawElement(context, roughCanvas, element) {
   if (body) roughCanvas.draw(body);
   const head = arrowHeadDrawable(roughCanvas.generator, element);
   if (head) roughCanvas.draw(head);
-  drawLabel(context, element);
+  drawLabel(context, element, roughCanvas);
   context.restore();
 }
 
@@ -1321,17 +1489,27 @@ function positionEditor() {
   editor.style.fontSize = `${fontSize}px`;
   editor.style.color = letterColor(element);
   editor.style.textAlign = letterAlign(element);
-  editor.style.fontFamily = FONT;
+  editor.style.fontFamily = fontStack(element);
   editor.style.lineHeight = "1.25";
   editor.style.boxSizing = "border-box";
   if (isLabelShape(element)) {
-    const padX = 14 * zoom;
-    const padY = 14 * zoom;
-    ctx.font = `${fontSize}px ${FONT}`;
-    const lines = wrapLines(ctx, editor.value || "", Math.max(20, width - padX * 2));
-    const contentH = Math.max(lineHeight, lines.length * lineHeight);
-    const offset = textBlockStartY({ x: 0, y: 0, width, height: boxHeight }, contentH, padY, letterVerticalAlign(element));
-    editor.style.top = `${origin.y + offset}px`;
+    const family = fontStack(element);
+    const fit = fitShapeLabelFont(ctx, element, editor.value || element.text || "", element.fontSize || 24, family);
+    const screenFont = fit.fontSize * zoom;
+    const padX = fit.inner.pad * zoom;
+    const padY = fit.inner.pad * zoom;
+    const innerLeft = origin.x + (fit.inner.x - box.x) * zoom;
+    const innerTop = origin.y + (fit.inner.y - box.y) * zoom;
+    const innerW = fit.inner.width * zoom;
+    const innerH = fit.inner.height * zoom;
+    editor.style.left = `${innerLeft}px`;
+    editor.style.width = `${Math.max(24, innerW)}px`;
+    editor.style.fontSize = `${screenFont}px`;
+    ctx.font = `${screenFont}px ${family}`;
+    const lines = wrapLines(ctx, editor.value || "", Math.max(8, innerW - padX * 2));
+    const contentH = Math.max(screenFont * 1.25, lines.length * screenFont * 1.25);
+    const offset = textBlockStartY({ x: 0, y: 0, width: innerW, height: innerH }, contentH, padY, letterVerticalAlign(element));
+    editor.style.top = `${innerTop + offset}px`;
     editor.style.height = `${contentH}px`;
     editor.style.padding = `0 ${padX}px`;
     editor.style.borderBottom = "0";
@@ -1375,7 +1553,7 @@ function commitEditor() {
 
 function updateDraft(element, world, shiftKey) {
   if (element.type !== "freedraw") world = maybeSnap(world);
-  if (element.type === "line" || element.type === "arrow") {
+  if (element.type === "line" || isArrowType(element.type)) {
     let end = world;
     if (shiftKey) end = snapAngle(element.x, element.y, world.x, world.y);
     const next = withAbsPoints(element, [
@@ -1401,7 +1579,7 @@ function updateDraft(element, world, shiftKey) {
 }
 
 function finalizeDraft(element) {
-  if (element.type === "rectangle" || element.type === "diamond" || element.type === "triangle" || element.type === "ellipse" || element.type === "sticky") {
+  if (CLOSED_SHAPE_TYPES.includes(element.type)) {
     const box = normalizeBox(element.x, element.y, element.width, element.height);
     const tiny = box.width < 4 && box.height < 4;
     if (element.type === "sticky" && tiny) {
@@ -1633,7 +1811,7 @@ function onPointerUp(event) {
     const screen = pointerPosition(event);
     const world = screenToWorld(screen.x, screen.y);
     const hit = hitTest(elements, world.x, world.y, 8 / zoom);
-    if (hit && ["text", "sticky", "rectangle", "diamond", "triangle", "ellipse"].includes(hit.type)) openEditor(hit);
+    if (hit && (hit.type === "text" || LABEL_TYPES.includes(hit.type))) openEditor(hit);
     else {
       const spot = maybeSnap(world);
       const element = createElement("text", spot.x, spot.y, style);
@@ -1670,7 +1848,7 @@ editor.addEventListener("input", () => {
   const element = elements.find((item) => item.id === editing.id);
   if (!element) return;
   element.text = editor.value;
-  ctx.font = `${element.fontSize}px ${FONT}`;
+  ctx.font = `${element.fontSize}px ${fontStack(element)}`;
   const lines = wrapLines(ctx, element.text, Math.max(20, element.width - 8));
   if (element.type === "text") element.height = Math.max(element.fontSize * 1.25, lines.length * element.fontSize * 1.25);
   positionEditor();
@@ -1707,7 +1885,7 @@ canvas.addEventListener("dblclick", (event) => {
   const screen = pointerPosition(event);
   const world = screenToWorld(screen.x, screen.y);
   const hit = hitTest(elements, world.x, world.y, 8 / zoom);
-  if (hit && ["text", "sticky", "rectangle", "diamond", "triangle", "ellipse"].includes(hit.type)) openEditor(hit);
+  if (hit && (hit.type === "text" || LABEL_TYPES.includes(hit.type))) openEditor(hit);
 });
 
 canvas.addEventListener("wheel", (event) => {
