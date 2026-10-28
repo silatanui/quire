@@ -1,0 +1,9 @@
+DirectoryIndex index.html index.php
+Options -MultiViews
+
+# Serve the Quire home page for /quire/ without requiring index.html in the URL.
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteBase /quire/
+  RewriteRule ^$ index.html [L]
+</IfModule>
